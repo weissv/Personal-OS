@@ -1,0 +1,171 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x", "debian-openssl-3.0.x"]
+}
+
+enum Role {
+  STUDENT
+  MENTOR     // Классный руководитель / куратор
+  PARENT
+  ADMIN
+}
+
+enum SlotType {
+  ACADEMIC_LESSON // Сгенерирован из сетки уроков
+  CUSTOM_EVENT    // Перемена, личное дело, факультатив
+  SELF_STUDY      // Субботняя самостоятельная работа
+}
+
+enum SlotStatus {
+  PENDING
+  DONE
+  MIGRATED        // Перенесено на другой день/неделю
+  DROPPED         // Отменено осознанно
+}
+
+enum ParentAccessLevel {
+  REVOKED
+  SUMMARY_ONLY
+  FULL_ACCESS
+}
+
+model User {
+  id            String    @id @default(uuid())
+  email         String    @unique
+  fullName      String
+  role          Role      @default(STUDENT)
+  gradeLevel    Int?      // e.g., 9
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Связи
+  sprints       Sprint[]
+  mentorReviews MentorReview[]
+  parentLinks   ParentStudentLink[] @relation("StudentToParent")
+  studentLinks  ParentStudentLink[] @relation("ParentToStudent")
+}
+
+model ParentStudentLink {
+  id          String            @id @default(uuid())
+  studentId   String
+  parentId    String
+  accessLevel ParentAccessLevel @default(REVOKED)
+  createdAt   DateTime          @default(now())
+
+  student     User              @relation("StudentToParent", fields: [studentId], references: [id], onDelete: Cascade)
+  parent      User              @relation("ParentToStudent", fields: [parentId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, parentId])
+}
+
+model Sprint {
+  id          String    @id @default(uuid())
+  studentId   String
+  title       String    // e.g., "1 четверть 2026-2027"
+  startDate   DateTime
+  endDate     DateTime
+  weeksTotal  Int       @default(10)
+  createdAt   DateTime  @default(now())
+
+  student     User      @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  weeks       Week[]
+}
+
+model Week {
+  id              String         @id @default(uuid())
+  sprintId        String
+  weekNumber      Int            // 1..10
+  startDate       DateTime
+  endDate         DateTime
+  
+  // Стратегический уровень недели
+  weekGoal        String?        // "Главное на неделю"
+  deadlinesEvents String?        // "Сроки / События"
+  notes           String?        // "Заметки"
+  ideas           String?        // "Идеи"
+  sketchesNote    String?        // "Наброски и эскизы (текстовый слой)"
+  
+  // Ретроспектива недели (заполняется в воскресенье)
+  retroSuccess    String?        // "Что получилось?"
+  retroBlockers   String?        // "Что пришлось перенести? Почему?"
+  retroNextPlan   String?        // "Что изменю на следующей неделе?"
+  isSubmitted     Boolean        @default(false)
+
+  // Обратная связь
+  mentorReview    MentorReview?
+  parentReview    ParentReview?
+
+  sprint          Sprint         @relation(fields: [sprintId], references: [id], onDelete: Cascade)
+  days            Day[]
+  mediaAssets     MediaAsset[]
+
+  @@unique([sprintId, weekNumber])
+}
+
+model Day {
+  id          String      @id @default(uuid())
+  weekId      String
+  date        DateTime    @db.Date
+  dayOfWeek   Int         // 1 (Пн) .. 7 (Вс)
+  isSelfStudy Boolean     @default(false) // True для субботы
+
+  week        Week        @relation(fields: [weekId], references: [id], onDelete: Cascade)
+  slots       DaySlot[]
+
+  @@unique([weekId, date])
+}
+
+model DaySlot {
+  id            String      @id @default(uuid())
+  dayId         String
+  startTime     String?     // e.g. "09:00"
+  endTime       String?     // e.g. "09:45"
+  title         String      // Название предмета или события
+  type          SlotType    @default(CUSTOM_EVENT)
+  isGhost       Boolean     @default(false) // True = шаблонный урок, еще не подтвержденный учеником
+
+  taskGoal      String?     // "Подготовка / Задачи / Что буду делать"
+  deliverable   String?     // "Что взять / Результат (Definition of Done)"
+  status        SlotStatus  @default(PENDING)
+  orderIndex    Int         @default(0)
+
+  day           Day         @relation(fields: [dayId], references: [id], onDelete: Cascade)
+}
+
+model MediaAsset {
+  id          String    @id @default(uuid())
+  weekId      String
+  fileUrl     String
+  fileType    String    // "image/webp", "audio/webm", "note/markdown"
+  fileName    String
+  fileSize    Int
+  note        String?   // Текстовый контекст к медиа
+  createdAt   DateTime  @default(now())
+
+  week        Week      @relation(fields: [weekId], references: [id], onDelete: Cascade)
+}
+
+model MentorReview {
+  id            String    @id @default(uuid())
+  weekId        String    @unique
+  mentorId      String
+  feedback      String    // "Наблюдения, рекомендации, договоренности"
+  signedAt      DateTime  @default(now())
+
+  week          Week      @relation(fields: [weekId], references: [id], onDelete: Cascade)
+  mentor        User      @relation(fields: [mentorId], references: [id])
+}
+
+model ParentReview {
+  id            String    @id @default(uuid())
+  weekId        String    @unique
+  comment       String    // "Что я заметил(а)? Чем могу помочь?"
+  signedAt      DateTime  @default(now())
+
+  week          Week      @relation(fields: [weekId], references: [id], onDelete: Cascade)
+}
