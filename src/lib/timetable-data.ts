@@ -1,0 +1,758 @@
+// Расписание уроков школы Mezon Inspiring school на 2026-2027 учебный год
+// Источник: MIS_Расписание_2026_2027_21_08_Старшая_школа (2).xlsx
+
+export interface TimetableSlotTemplate {
+  gradeLevel: number;
+  dayOfWeek: number; // 1 (Пн) .. 5 (Пт)
+  startTime: string; // '08:30'
+  endTime: string;   // '09:10'
+  title: string;
+  orderIndex: number;
+}
+
+export const TIMETABLE_SLOTS_8_GRADE: TimetableSlotTemplate[] = [
+  {
+    "gradeLevel": 8,
+    "dayOfWeek": 1,
+    "startTime": "08:30",
+    "endTime": "09:10",
+    "title": "Келажак соати - Дебаты",
+    "orderIndex": 1
+  },
+  {
+    "gradeLevel": 8,
+    "dayOfWeek": 1,
+    "startTime": "09:20",
+    "endTime": "10:00",
+    "title": "Георгафия/Основы экономических знаний",
+    "orderIndex": 2
+  },
+  {
+    "gradeLevel": 8,
+    "dayOfWeek": 1,
+    "startTime": "10:15",
+    "endTime": "10:55",
+    "title": "Узбекский язык",
+    "orderIndex": 3
+  },
+  {
+    "gradeLevel": 8,
+    "dayOfWeek": 1,
+    "startTime": "11:05",
+    "endTime": "11:45",
+    "title": "Алгебра",
+    "orderIndex": 4
+  },
+  {
+    "gradeLevel": 8,
+    "dayOfWeek": 1,
+    "startTime": "11:55",
+    "endTime": "12:35",
+    "title": "История Узбекистана",
+    "orderIndex": 5
+  },
+  {
+    "gradeLevel": 8,
+    "dayOfWeek": 1,
+    "startTime": "12:45",
+    "endTime": "13:25",
+    "title": "Русский язык",
+    "orderIndex": 6
+  },
+  {
+    "gradeLevel": 8,
+    "dayOfWeek": 1,
+    "startTime": "14:10",
+    "endTime": "14:50",
+    "title": "Технология",
+    "orderIndex": 7
+  },
+  {
+    "gradeLevel": 8,
+    "dayOfWeek": 1,
+    "startTime": "15:00",
+    "endTime": "15:40",
+    "title": "Самостоятельная работа (СР)",
+    "orderIndex": 8
+  },
+  {
+    "gradeLevel": 8,
+    "dayOfWeek": 1,
+    "startTime": "15:50",
+    "endTime": "16:30",
+    "title": "Айкидо",
+    "orderIndex": 9
+  },
+  {
+    "gradeLevel": 8,
+    "dayOfWeek": 1,
+    "startTime": "16:40",
+    "endTime": "17:20",
+    "title": "Самостоятельная работа (СР)",
+    "orderIndex": 10
+  },
+  {
+    "gradeLevel": 8,
+    "dayOfWeek": 2,
+    "startTime": "08:30",
+    "endTime": "09:10",
+    "title": "Английский язык",
+    "orderIndex": 1
+  },
+  {
+    "gradeLevel": 8,
+    "dayOfWeek": 2,
+    "startTime": "09:20",
+    "endTime": "10:00",
+    "title": "Литература",
+    "orderIndex": 2
+  },
+  {
+    "gradeLevel": 8,
+    "dayOfWeek": 2,
+    "startTime": "10:15",
+    "endTime": "10:55",
+    "title": "Физика",
+    "orderIndex": 3
+  },
+  {
+    "gradeLevel": 8,
+    "dayOfWeek": 2,
+    "startTime": "11:05",
+    "endTime": "11:45",
+    "title": "Логика",
+    "orderIndex": 4
+  },
+  {
+    "gradeLevel": 8,
+    "dayOfWeek": 2,
+    "startTime": "11:55",
+    "endTime": "12:35",
+    "title": "Основы государства и права",
+    "orderIndex": 5
+  },
+  {
+    "gradeLevel": 8,
+    "dayOfWeek": 2,
+    "startTime": "12:45",
+    "endTime": "13:25",
+    "title": "Черчение",
+    "orderIndex": 6
+  },
+  {
+    "gradeLevel": 8,
+    "dayOfWeek": 2,
+    "startTime": "14:10",
+    "endTime": "14:50",
+    "title": "Самостоятельная работа (СР)",
+    "orderIndex": 7
+  },
+  {
+    "gradeLevel": 8,
+    "dayOfWeek": 2,
+    "startTime": "15:00",
+    "endTime": "15:40",
+    "title": "Биология",
+    "orderIndex": 8
+  },
+  {
+    "gradeLevel": 8,
+    "dayOfWeek": 2,
+    "startTime": "15:50",
+    "endTime": "16:30",
+    "title": "Самостоятельная работа (СР)",
+    "orderIndex": 9
+  },
+  {
+    "gradeLevel": 8,
+    "dayOfWeek": 2,
+    "startTime": "16:40",
+    "endTime": "17:20",
+    "title": "Самостоятельная работа (СР)",
+    "orderIndex": 10
+  },
+  {
+    "gradeLevel": 8,
+    "dayOfWeek": 3,
+    "startTime": "08:30",
+    "endTime": "09:10",
+    "title": "Английский язык",
+    "orderIndex": 1
+  },
+  {
+    "gradeLevel": 8,
+    "dayOfWeek": 3,
+    "startTime": "09:20",
+    "endTime": "10:00",
+    "title": "Узбекский язык",
+    "orderIndex": 2
+  },
+  {
+    "gradeLevel": 8,
+    "dayOfWeek": 3,
+    "startTime": "10:15",
+    "endTime": "10:55",
+    "title": "Русский язык",
+    "orderIndex": 3
+  },
+  {
+    "gradeLevel": 8,
+    "dayOfWeek": 3,
+    "startTime": "11:05",
+    "endTime": "11:45",
+    "title": "Химия",
+    "orderIndex": 4
+  },
+  {
+    "gradeLevel": 8,
+    "dayOfWeek": 3,
+    "startTime": "11:55",
+    "endTime": "12:35",
+    "title": "Алгебра",
+    "orderIndex": 5
+  },
+  {
+    "gradeLevel": 8,
+    "dayOfWeek": 3,
+    "startTime": "12:45",
+    "endTime": "13:25",
+    "title": "Самостоятельная работа (СР)",
+    "orderIndex": 6
+  },
+  {
+    "gradeLevel": 8,
+    "dayOfWeek": 3,
+    "startTime": "14:10",
+    "endTime": "14:50",
+    "title": "Алгебра",
+    "orderIndex": 7
+  },
+  {
+    "gradeLevel": 8,
+    "dayOfWeek": 3,
+    "startTime": "15:00",
+    "endTime": "15:40",
+    "title": "Физическое воспитание",
+    "orderIndex": 8
+  },
+  {
+    "gradeLevel": 8,
+    "dayOfWeek": 3,
+    "startTime": "15:50",
+    "endTime": "16:30",
+    "title": "Самостоятельная работа (СР)",
+    "orderIndex": 9
+  },
+  {
+    "gradeLevel": 8,
+    "dayOfWeek": 4,
+    "startTime": "08:30",
+    "endTime": "09:10",
+    "title": "Логика",
+    "orderIndex": 1
+  },
+  {
+    "gradeLevel": 8,
+    "dayOfWeek": 4,
+    "startTime": "09:20",
+    "endTime": "10:00",
+    "title": "Биология",
+    "orderIndex": 2
+  },
+  {
+    "gradeLevel": 8,
+    "dayOfWeek": 4,
+    "startTime": "10:15",
+    "endTime": "10:55",
+    "title": "Физика",
+    "orderIndex": 3
+  },
+  {
+    "gradeLevel": 8,
+    "dayOfWeek": 4,
+    "startTime": "11:05",
+    "endTime": "11:45",
+    "title": "История Всемирная",
+    "orderIndex": 4
+  },
+  {
+    "gradeLevel": 8,
+    "dayOfWeek": 4,
+    "startTime": "11:55",
+    "endTime": "12:35",
+    "title": "Информатика",
+    "orderIndex": 5
+  },
+  {
+    "gradeLevel": 8,
+    "dayOfWeek": 4,
+    "startTime": "12:45",
+    "endTime": "13:25",
+    "title": "Информатика",
+    "orderIndex": 6
+  },
+  {
+    "gradeLevel": 8,
+    "dayOfWeek": 4,
+    "startTime": "14:10",
+    "endTime": "14:50",
+    "title": "География",
+    "orderIndex": 7
+  },
+  {
+    "gradeLevel": 8,
+    "dayOfWeek": 4,
+    "startTime": "15:00",
+    "endTime": "15:40",
+    "title": "Актёрское мастерство",
+    "orderIndex": 8
+  },
+  {
+    "gradeLevel": 8,
+    "dayOfWeek": 4,
+    "startTime": "16:40",
+    "endTime": "17:20",
+    "title": "Самостоятельная работа (СР)",
+    "orderIndex": 9
+  },
+  {
+    "gradeLevel": 8,
+    "dayOfWeek": 5,
+    "startTime": "08:30",
+    "endTime": "09:10",
+    "title": "Английский язык",
+    "orderIndex": 1
+  },
+  {
+    "gradeLevel": 8,
+    "dayOfWeek": 5,
+    "startTime": "09:20",
+    "endTime": "10:00",
+    "title": "Геометрия",
+    "orderIndex": 2
+  },
+  {
+    "gradeLevel": 8,
+    "dayOfWeek": 5,
+    "startTime": "10:15",
+    "endTime": "10:55",
+    "title": "Узбекский язык",
+    "orderIndex": 3
+  },
+  {
+    "gradeLevel": 8,
+    "dayOfWeek": 5,
+    "startTime": "11:05",
+    "endTime": "11:45",
+    "title": "Литература",
+    "orderIndex": 4
+  },
+  {
+    "gradeLevel": 8,
+    "dayOfWeek": 5,
+    "startTime": "11:55",
+    "endTime": "12:35",
+    "title": "Геометрия",
+    "orderIndex": 5
+  },
+  {
+    "gradeLevel": 8,
+    "dayOfWeek": 5,
+    "startTime": "12:45",
+    "endTime": "13:25",
+    "title": "История Узбекистана",
+    "orderIndex": 6
+  },
+  {
+    "gradeLevel": 8,
+    "dayOfWeek": 5,
+    "startTime": "14:10",
+    "endTime": "14:50",
+    "title": "Химия",
+    "orderIndex": 7
+  },
+  {
+    "gradeLevel": 8,
+    "dayOfWeek": 5,
+    "startTime": "16:40",
+    "endTime": "17:20",
+    "title": "Самостоятельная работа (СР)",
+    "orderIndex": 8
+  }
+];
+
+export const TIMETABLE_SLOTS_9_GRADE: TimetableSlotTemplate[] = [
+  {
+    "gradeLevel": 9,
+    "dayOfWeek": 1,
+    "startTime": "08:30",
+    "endTime": "09:10",
+    "title": "Келажак соати - Дебаты",
+    "orderIndex": 1
+  },
+  {
+    "gradeLevel": 9,
+    "dayOfWeek": 1,
+    "startTime": "09:20",
+    "endTime": "10:00",
+    "title": "Русский язык",
+    "orderIndex": 2
+  },
+  {
+    "gradeLevel": 9,
+    "dayOfWeek": 1,
+    "startTime": "10:15",
+    "endTime": "10:55",
+    "title": "Узбекский язык",
+    "orderIndex": 3
+  },
+  {
+    "gradeLevel": 9,
+    "dayOfWeek": 1,
+    "startTime": "11:05",
+    "endTime": "11:45",
+    "title": "Георгафия/Основы экономических знаний",
+    "orderIndex": 4
+  },
+  {
+    "gradeLevel": 9,
+    "dayOfWeek": 1,
+    "startTime": "11:55",
+    "endTime": "12:35",
+    "title": "Алгебра",
+    "orderIndex": 5
+  },
+  {
+    "gradeLevel": 9,
+    "dayOfWeek": 1,
+    "startTime": "12:45",
+    "endTime": "13:25",
+    "title": "Химия",
+    "orderIndex": 6
+  },
+  {
+    "gradeLevel": 9,
+    "dayOfWeek": 1,
+    "startTime": "14:10",
+    "endTime": "14:50",
+    "title": "Самостоятельная работа (СР)",
+    "orderIndex": 7
+  },
+  {
+    "gradeLevel": 9,
+    "dayOfWeek": 1,
+    "startTime": "15:00",
+    "endTime": "15:40",
+    "title": "Биология",
+    "orderIndex": 8
+  },
+  {
+    "gradeLevel": 9,
+    "dayOfWeek": 1,
+    "startTime": "16:40",
+    "endTime": "17:20",
+    "title": "Самостоятельная работа (СР)",
+    "orderIndex": 9
+  },
+  {
+    "gradeLevel": 9,
+    "dayOfWeek": 2,
+    "startTime": "08:30",
+    "endTime": "09:10",
+    "title": "Основы государства и права",
+    "orderIndex": 1
+  },
+  {
+    "gradeLevel": 9,
+    "dayOfWeek": 2,
+    "startTime": "09:20",
+    "endTime": "10:00",
+    "title": "Физика",
+    "orderIndex": 2
+  },
+  {
+    "gradeLevel": 9,
+    "dayOfWeek": 2,
+    "startTime": "10:15",
+    "endTime": "10:55",
+    "title": "Логика",
+    "orderIndex": 3
+  },
+  {
+    "gradeLevel": 9,
+    "dayOfWeek": 2,
+    "startTime": "11:05",
+    "endTime": "11:45",
+    "title": "Литература",
+    "orderIndex": 4
+  },
+  {
+    "gradeLevel": 9,
+    "dayOfWeek": 2,
+    "startTime": "11:55",
+    "endTime": "12:35",
+    "title": "Черчение",
+    "orderIndex": 5
+  },
+  {
+    "gradeLevel": 9,
+    "dayOfWeek": 2,
+    "startTime": "12:45",
+    "endTime": "13:25",
+    "title": "Информатика",
+    "orderIndex": 6
+  },
+  {
+    "gradeLevel": 9,
+    "dayOfWeek": 2,
+    "startTime": "14:10",
+    "endTime": "14:50",
+    "title": "Информатика",
+    "orderIndex": 7
+  },
+  {
+    "gradeLevel": 9,
+    "dayOfWeek": 2,
+    "startTime": "15:00",
+    "endTime": "15:40",
+    "title": "Самостоятельная работа (СР)",
+    "orderIndex": 8
+  },
+  {
+    "gradeLevel": 9,
+    "dayOfWeek": 2,
+    "startTime": "15:50",
+    "endTime": "16:30",
+    "title": "Самостоятельная работа (СР)",
+    "orderIndex": 9
+  },
+  {
+    "gradeLevel": 9,
+    "dayOfWeek": 2,
+    "startTime": "16:40",
+    "endTime": "17:20",
+    "title": "Самостоятельная работа (СР)",
+    "orderIndex": 10
+  },
+  {
+    "gradeLevel": 9,
+    "dayOfWeek": 3,
+    "startTime": "08:30",
+    "endTime": "09:10",
+    "title": "Алгебра",
+    "orderIndex": 1
+  },
+  {
+    "gradeLevel": 9,
+    "dayOfWeek": 3,
+    "startTime": "09:20",
+    "endTime": "10:00",
+    "title": "Узбекский язык",
+    "orderIndex": 2
+  },
+  {
+    "gradeLevel": 9,
+    "dayOfWeek": 3,
+    "startTime": "10:15",
+    "endTime": "10:55",
+    "title": "Английский язык",
+    "orderIndex": 3
+  },
+  {
+    "gradeLevel": 9,
+    "dayOfWeek": 3,
+    "startTime": "11:05",
+    "endTime": "11:45",
+    "title": "Алгебра",
+    "orderIndex": 4
+  },
+  {
+    "gradeLevel": 9,
+    "dayOfWeek": 3,
+    "startTime": "11:55",
+    "endTime": "12:35",
+    "title": "Русский язык",
+    "orderIndex": 5
+  },
+  {
+    "gradeLevel": 9,
+    "dayOfWeek": 3,
+    "startTime": "12:45",
+    "endTime": "13:25",
+    "title": "Технология",
+    "orderIndex": 6
+  },
+  {
+    "gradeLevel": 9,
+    "dayOfWeek": 3,
+    "startTime": "14:10",
+    "endTime": "14:50",
+    "title": "История Узбекистана",
+    "orderIndex": 7
+  },
+  {
+    "gradeLevel": 9,
+    "dayOfWeek": 3,
+    "startTime": "15:50",
+    "endTime": "16:30",
+    "title": "Самостоятельная работа (СР)",
+    "orderIndex": 8
+  },
+  {
+    "gradeLevel": 9,
+    "dayOfWeek": 4,
+    "startTime": "08:30",
+    "endTime": "09:10",
+    "title": "История Всемирная",
+    "orderIndex": 1
+  },
+  {
+    "gradeLevel": 9,
+    "dayOfWeek": 4,
+    "startTime": "09:20",
+    "endTime": "10:00",
+    "title": "Физика",
+    "orderIndex": 2
+  },
+  {
+    "gradeLevel": 9,
+    "dayOfWeek": 4,
+    "startTime": "10:15",
+    "endTime": "10:55",
+    "title": "Логика",
+    "orderIndex": 3
+  },
+  {
+    "gradeLevel": 9,
+    "dayOfWeek": 4,
+    "startTime": "11:05",
+    "endTime": "11:45",
+    "title": "Английский язык",
+    "orderIndex": 4
+  },
+  {
+    "gradeLevel": 9,
+    "dayOfWeek": 4,
+    "startTime": "11:55",
+    "endTime": "12:35",
+    "title": "Химия",
+    "orderIndex": 5
+  },
+  {
+    "gradeLevel": 9,
+    "dayOfWeek": 4,
+    "startTime": "12:45",
+    "endTime": "13:25",
+    "title": "Актёрское мастерство",
+    "orderIndex": 6
+  },
+  {
+    "gradeLevel": 9,
+    "dayOfWeek": 4,
+    "startTime": "14:10",
+    "endTime": "14:50",
+    "title": "Самостоятельная работа (СР)",
+    "orderIndex": 7
+  },
+  {
+    "gradeLevel": 9,
+    "dayOfWeek": 4,
+    "startTime": "15:00",
+    "endTime": "15:40",
+    "title": "География",
+    "orderIndex": 8
+  },
+  {
+    "gradeLevel": 9,
+    "dayOfWeek": 4,
+    "startTime": "16:40",
+    "endTime": "17:20",
+    "title": "Самостоятельная работа (СР)",
+    "orderIndex": 9
+  },
+  {
+    "gradeLevel": 9,
+    "dayOfWeek": 5,
+    "startTime": "08:30",
+    "endTime": "09:10",
+    "title": "Геометрия",
+    "orderIndex": 1
+  },
+  {
+    "gradeLevel": 9,
+    "dayOfWeek": 5,
+    "startTime": "09:20",
+    "endTime": "10:00",
+    "title": "Английский язык",
+    "orderIndex": 2
+  },
+  {
+    "gradeLevel": 9,
+    "dayOfWeek": 5,
+    "startTime": "10:15",
+    "endTime": "10:55",
+    "title": "Узбекский язык",
+    "orderIndex": 3
+  },
+  {
+    "gradeLevel": 9,
+    "dayOfWeek": 5,
+    "startTime": "11:05",
+    "endTime": "11:45",
+    "title": "Геометрия",
+    "orderIndex": 4
+  },
+  {
+    "gradeLevel": 9,
+    "dayOfWeek": 5,
+    "startTime": "11:55",
+    "endTime": "12:35",
+    "title": "Литература",
+    "orderIndex": 5
+  },
+  {
+    "gradeLevel": 9,
+    "dayOfWeek": 5,
+    "startTime": "12:45",
+    "endTime": "13:25",
+    "title": "Биология",
+    "orderIndex": 6
+  },
+  {
+    "gradeLevel": 9,
+    "dayOfWeek": 5,
+    "startTime": "14:10",
+    "endTime": "14:50",
+    "title": "История Узбекистана",
+    "orderIndex": 7
+  },
+  {
+    "gradeLevel": 9,
+    "dayOfWeek": 5,
+    "startTime": "15:00",
+    "endTime": "15:40",
+    "title": "Самостоятельная работа (СР)",
+    "orderIndex": 8
+  },
+  {
+    "gradeLevel": 9,
+    "dayOfWeek": 5,
+    "startTime": "15:50",
+    "endTime": "16:30",
+    "title": "Самостоятельная работа (СР)",
+    "orderIndex": 9
+  },
+  {
+    "gradeLevel": 9,
+    "dayOfWeek": 5,
+    "startTime": "16:40",
+    "endTime": "17:20",
+    "title": "Самостоятельная работа (СР)",
+    "orderIndex": 10
+  }
+];
+
+export const ALL_TIMETABLE_SLOTS: TimetableSlotTemplate[] = [
+  ...TIMETABLE_SLOTS_8_GRADE,
+  ...TIMETABLE_SLOTS_9_GRADE,
+];

@@ -354,6 +354,27 @@ export const AdminGodmodeView: React.FC<AdminGodmodeViewProps> = ({ onSwitchToUs
     }
   };
 
+  const [isSyncingTimetable, setIsSyncingTimetable] = useState(false);
+
+  const handleSyncTimetable = async () => {
+    if (!confirm('Синхронизировать эталонное расписание 8 и 9 классов из MIS и обновить дневники учеников?')) return;
+    setIsSyncingTimetable(true);
+    try {
+      const res = await fetch('/api/v1/admin/sync', { method: 'POST' });
+      const json = await res.json();
+      if (res.ok) {
+        alert(`Синхронизация успешна!\nКураторов: ${json.curatorsCount}\nУроков в шаблоне: ${json.timetableSlotsCount}\nДобавлено уроков в дневники: ${json.totalSlotsPopulated}`);
+        refreshAll();
+      } else {
+        alert(json.error || 'Ошибка синхронизации');
+      }
+    } catch {
+      alert('Ошибка при отправке запроса');
+    } finally {
+      setIsSyncingTimetable(false);
+    }
+  };
+
   const filteredUsers = users.filter((u) => {
     const matchesRole = roleFilter === 'ALL' || u.role === roleFilter;
     const matchesSearch =
@@ -1068,6 +1089,18 @@ export const AdminGodmodeView: React.FC<AdminGodmodeViewProps> = ({ onSwitchToUs
               >
                 <Plus size={14} />
                 <span>Добавить урок</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleSyncTimetable}
+                disabled={isSyncingTimetable}
+                className="gm-btn-refresh"
+                style={{ marginLeft: 8 }}
+                title="Синхронизировать сетку 8 и 9 классов из файла MIS"
+              >
+                <RefreshCw size={14} className={isSyncingTimetable ? 'animate-spin' : ''} />
+                <span>{isSyncingTimetable ? 'Синхронизация…' : 'Синхронизировать из MIS'}</span>
               </button>
             </div>
           </div>

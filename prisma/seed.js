@@ -11,6 +11,27 @@ function hashPassword(password) {
   return `${salt}:${hash}`;
 }
 
+const timetableData = require('../scripts/timetable_data.json');
+
+const curators = [
+  {
+    fullName: 'Тамилла',
+    username: 'tamilla',
+    email: 'tamilla@mezon.uz',
+    role: Role.MENTOR,
+    gradeLevel: 8,
+    password: 'Mz!tami7PqX',
+  },
+  {
+    fullName: 'Феруза',
+    username: 'feruza',
+    email: 'feruza@mezon.uz',
+    role: Role.MENTOR,
+    gradeLevel: 9,
+    password: 'Mz!feru9LkZ',
+  },
+];
+
 const studentsData = [
   // 8 класс
   { fullName: 'Мустапаев Искандер', username: 'iskander', gradeLevel: 8, email: 'iskander@mezon.uz', password: 'Mz!iska8yDj' },
@@ -29,7 +50,7 @@ const studentsData = [
 ];
 
 async function main() {
-  console.log('Seeding Mezon Sprint OS database with production users...');
+  console.log('Seeding Mezon Sprint OS database with production users & timetable...');
 
   // Clean existing data
   await prisma.parentReview.deleteMany();
@@ -40,6 +61,7 @@ async function main() {
   await prisma.week.deleteMany();
   await prisma.sprint.deleteMany();
   await prisma.parentStudentLink.deleteMany();
+  await prisma.timetableSlot.deleteMany();
   await prisma.user.deleteMany();
 
   // 0. Create GODMODE Admin (Somi)
@@ -55,10 +77,43 @@ async function main() {
   });
   console.log('Created Admin Somi:', somi.id);
 
-  // 1. Create real students and 10-week sprint for each
+  // 1. Create Curators
+  for (const c of curators) {
+    const pwdHash = hashPassword(c.password);
+    const curator = await prisma.user.create({
+      data: {
+        username: c.username,
+        email: c.email,
+        passwordHash: pwdHash,
+        fullName: c.fullName,
+        role: c.role,
+        gradeLevel: c.gradeLevel,
+      },
+    });
+    console.log(`Created Curator ${curator.fullName} (@${curator.username}, ${curator.gradeLevel} класс)`);
+  }
+
+  // 2. Create Timetable Templates
+  for (const grade of [8, 9]) {
+    const gSlots = timetableData[String(grade)] || [];
+    for (const s of gSlots) {
+      await prisma.timetableSlot.create({
+        data: {
+          gradeLevel: grade,
+          dayOfWeek: s.dayOfWeek,
+          startTime: s.startTime,
+          endTime: s.endTime,
+          title: s.title,
+          orderIndex: s.orderIndex,
+        },
+      });
+    }
+  }
+  console.log('Created 92 TimetableSlots');
+
+  // 3. Create Students and Sprints with Lessons
   const now = new Date();
   const currentYear = now.getFullYear();
-  // Monday of current week
   const dayOfWeek = now.getDay() === 0 ? 7 : now.getDay();
   const sprintStart = new Date(now.getTime() - (dayOfWeek - 1) * 24 * 60 * 60 * 1000);
   sprintStart.setHours(0, 0, 0, 0);
@@ -86,6 +141,8 @@ async function main() {
       },
     });
 
+    const gradeSlots = timetableData[String(st.gradeLevel)] || [];
+
     for (let w = 1; w <= 10; w++) {
       const weekStart = new Date(sprintStart.getTime() + (w - 1) * 7 * 24 * 60 * 60 * 1000);
       const weekEnd = new Date(weekStart.getTime() + 6 * 24 * 60 * 60 * 1000);
@@ -102,7 +159,7 @@ async function main() {
 
       for (let d = 1; d <= 7; d++) {
         const dayDate = new Date(weekStart.getTime() + (d - 1) * 24 * 60 * 60 * 1000);
-        await prisma.day.create({
+        const day = await prisma.day.create({
           data: {
             weekId: week.id,
             date: dayDate,
@@ -110,13 +167,31 @@ async function main() {
             isSelfStudy: d === 6,
           },
         });
+
+        if (d >= 1 && d <= 5) {
+          const dayLessons = gradeSlots.filter((s) => s.dayOfWeek === d);
+          for (const l of dayLessons) {
+            await prisma.daySlot.create({
+              data: {
+                dayId: day.id,
+                startTime: l.startTime,
+                endTime: l.endTime,
+                title: l.title,
+                type: SlotType.ACADEMIC_LESSON,
+                isGhost: true,
+                status: SlotStatus.PENDING,
+                orderIndex: l.orderIndex,
+              },
+            });
+          }
+        }
       }
     }
 
-    console.log(`Created student ${st.fullName} (@${st.username}, ${st.gradeLevel} класс)`);
+    console.log(`Created student ${st.fullName} with 10 weeks of timetable lessons`);
   }
 
-  console.log(`\nAll users seeded successfully! Total users: 13 (1 Admin + 12 Students)`);
+  console.log(`\nAll users and timetable seeded successfully! Total users: 15 (1 Admin + 2 Curators + 12 Students)`);
 }
 
 main()
