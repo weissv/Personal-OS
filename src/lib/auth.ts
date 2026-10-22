@@ -96,9 +96,11 @@ export async function getSessionContext(tokenOrReq?: string | Request | null): P
     }
 
     const payload = verifySessionToken(token);
+    console.log('[auth-debug] token:', token ? `${token.slice(0, 12)}...` : 'NULL', 'payload:', payload ? payload.u : 'NULL');
     if (!payload) return null;
 
     const user = await prisma.user.findUnique({ where: { id: payload.u } });
+    console.log('[auth-debug] user found:', user ? `${user.username} (${user.id}) active=${user.isActive}` : 'NOT_FOUND');
     if (!user || !user.isActive) return null;
 
     let realAdmin: SafeUser | null = null;

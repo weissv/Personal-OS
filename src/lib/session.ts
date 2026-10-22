@@ -38,23 +38,39 @@ export function createSessionToken(payload: Omit<SessionPayload, 'e'>): string {
 }
 
 export function verifySessionToken(token: string | undefined | null): SessionPayload | null {
-  if (!token) return null;
+  if (!token) {
+    console.log('[verifyToken] token is empty/null');
+    return null;
+  }
   const dot = token.indexOf('.');
-  if (dot < 1) return null;
+  if (dot < 1) {
+    console.log('[verifyToken] no dot in token');
+    return null;
+  }
   const body = token.slice(0, dot);
   const signature = token.slice(dot + 1);
 
   const expected = sign(body);
   const a = Buffer.from(signature);
   const b = Buffer.from(expected);
-  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+    console.log('[verifyToken] signature mismatch. sig.len:', a.length, 'exp.len:', b.length);
+    return null;
+  }
 
   try {
     const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as SessionPayload;
-    if (typeof payload.u !== 'string' || typeof payload.e !== 'number') return null;
-    if (payload.e < Date.now()) return null;
+    if (typeof payload.u !== 'string' || typeof payload.e !== 'number') {
+      console.log('[verifyToken] invalid payload fields');
+      return null;
+    }
+    if (payload.e < Date.now()) {
+      console.log('[verifyToken] token expired: exp=', payload.e, 'now=', Date.now());
+      return null;
+    }
     return payload;
-  } catch {
+  } catch (err) {
+    console.log('[verifyToken] json parse err:', err);
     return null;
   }
 }
