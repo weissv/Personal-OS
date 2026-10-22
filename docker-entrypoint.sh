@@ -9,7 +9,7 @@ if [ -n "$DATABASE_URL" ]; then
   echo "==> Synchronizing database schema with Prisma..."
   ./node_modules/prisma/build/index.js db push --accept-data-loss --skip-generate || echo "Warning: Prisma db push encountered an issue. Continuing..."
   echo "==> Ensuring Somi Godmode account exists and is ready..."
-  node scripts/ensure-admin.js || echo "Warning: ensure-admin encountered an issue."
+  node scripts/ensure-admin.js &
 fi
 
 echo "==> Starting Next.js standalone server on port $PORT..."

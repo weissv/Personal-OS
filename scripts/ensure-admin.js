@@ -148,9 +148,7 @@ async function main() {
     }
   }
 
-  for (const slot of slotsToCreate) {
-    await prisma.timetableSlot.create({ data: slot });
-  }
+  await prisma.timetableSlot.createMany({ data: slotsToCreate });
   console.log(`✓ Synchronized ${slotsToCreate.length} timetable template slots (8 & 9 классы)`);
 
   // 5. Populate Sprint Weeks and DaySlots for each student
@@ -160,7 +158,7 @@ async function main() {
   const sprintStart = new Date(now.getTime() - (dayOfWeek - 1) * 24 * 60 * 60 * 1000);
   sprintStart.setHours(0, 0, 0, 0);
 
-  let totalDaySlotsCreated = 0;
+  const daySlotsToBatch = [];
 
   for (const st of students) {
     const user = await prisma.user.findUnique({ where: { username: st.username } });
@@ -172,7 +170,7 @@ async function main() {
         weeks: {
           include: {
             days: {
-              include: { slots: true },
+              include: { slots: { select: { id: true } } },
             },
           },
         },
@@ -187,15 +185,6 @@ async function main() {
           startDate: sprintStart,
           endDate: new Date(sprintStart.getTime() + 10 * 7 * 24 * 60 * 60 * 1000 - 1),
           weeksTotal: 10,
-        },
-        include: {
-          weeks: {
-            include: {
-              days: {
-                include: { slots: true },
-              },
-            },
-          },
         },
       });
 
@@ -226,14 +215,13 @@ async function main() {
         }
       }
 
-      // Re-fetch sprint with created weeks and days
       sprint = await prisma.sprint.findUnique({
         where: { id: sprint.id },
         include: {
           weeks: {
             include: {
               days: {
-                include: { slots: true },
+                include: { slots: { select: { id: true } } },
               },
             },
           },
@@ -246,23 +234,19 @@ async function main() {
     for (const week of sprint.weeks) {
       for (const day of week.days) {
         if (day.dayOfWeek >= 1 && day.dayOfWeek <= 5) {
-          const existingCount = day.slots.length;
-          if (existingCount === 0) {
+          if (day.slots.length === 0) {
             const dayLessons = gradeSlots.filter((s) => s.dayOfWeek === day.dayOfWeek);
             for (const l of dayLessons) {
-              await prisma.daySlot.create({
-                data: {
-                  dayId: day.id,
-                  startTime: l.startTime,
-                  endTime: l.endTime,
-                  title: l.title,
-                  type: 'ACADEMIC_LESSON',
-                  isGhost: true,
-                  status: 'PENDING',
-                  orderIndex: l.orderIndex,
-                },
+              daySlotsToBatch.push({
+                dayId: day.id,
+                startTime: l.startTime,
+                endTime: l.endTime,
+                title: l.title,
+                type: 'ACADEMIC_LESSON',
+                isGhost: true,
+                status: 'PENDING',
+                orderIndex: l.orderIndex,
               });
-              totalDaySlotsCreated++;
             }
           }
         }
@@ -270,7 +254,10 @@ async function main() {
     }
   }
 
-  console.log(`✓ Populated ${totalDaySlotsCreated} lesson slots in student diaries`);
+  if (daySlotsToBatch.length > 0) {
+    await prisma.daySlot.createMany({ data: daySlotsToBatch });
+  }
+  console.log(`✓ Populated ${daySlotsToBatch.length} lesson slots in student diaries`);
 
   // 6. Generate Updated CSV
   const csvRows = [
