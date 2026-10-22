@@ -11,7 +11,7 @@ import { getCurrentWeekNumber, pickActiveSprint } from '@/lib/sprint';
  */
 export async function GET(req: NextRequest) {
   try {
-    const auth = await authenticate({ roles: [Role.STUDENT, Role.PARENT, Role.MENTOR, Role.ADMIN] });
+    const auth = await authenticate({ roles: [Role.STUDENT, Role.PARENT, Role.MENTOR, Role.ADMIN] }, req);
     if (!auth.ok) return auth.response;
     const { ctx } = auth;
 

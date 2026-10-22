@@ -12,7 +12,7 @@ export async function GET(
   { params }: { params: Promise<{ weekId: string }> }
 ) {
   try {
-    const auth = await authenticate();
+    const auth = await authenticate({}, req);
     if (!auth.ok) return auth.response;
     const { ctx } = auth;
     const { weekId } = await params;
@@ -64,7 +64,7 @@ export async function PATCH(
   { params }: { params: Promise<{ weekId: string }> }
 ) {
   try {
-    const auth = await authenticate({ roles: [Role.STUDENT] });
+    const auth = await authenticate({ roles: [Role.STUDENT] }, req);
     if (!auth.ok) return auth.response;
     const { weekId } = await params;
 

@@ -47,9 +47,26 @@ export interface SessionContext {
   isImpersonating: boolean;
 }
 
-export async function getSessionContext(explicitToken?: string | null): Promise<SessionContext | null> {
+export async function getSessionContext(tokenOrReq?: string | Request | null): Promise<SessionContext | null> {
   try {
-    let token = explicitToken;
+    let token: string | undefined | null = null;
+
+    if (typeof tokenOrReq === 'string') {
+      token = tokenOrReq;
+    } else if (tokenOrReq && 'headers' in tokenOrReq) {
+      const authHeader = tokenOrReq.headers.get('authorization');
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        token = authHeader.slice(7).trim();
+      }
+      if (!token) {
+        const rawCookie = tokenOrReq.headers.get('cookie') || '';
+        const match = rawCookie.match(/(?:^|;\s*)mezon_session=([^;]+)/);
+        if (match) {
+          token = decodeURIComponent(match[1]);
+        }
+      }
+    }
+
     if (!token) {
       try {
         const headerList = await headers();
@@ -131,8 +148,11 @@ export function handleApiError(route: string, error: unknown) {
  *  - roles: допустимые роли эффективного пользователя
  *  - admin: требуется действующий администратор (в т.ч. во время имперсонации)
  */
-export async function authenticate(opts: { roles?: Role[]; admin?: boolean } = {}): Promise<AuthResult> {
-  const ctx = await getSessionContext();
+export async function authenticate(
+  opts: { roles?: Role[]; admin?: boolean } = {},
+  req?: Request | null
+): Promise<AuthResult> {
+  const ctx = await getSessionContext(req);
   if (!ctx) return { ok: false, response: unauthorized() };
 
   if (opts.admin && !ctx.actor) return { ok: false, response: forbidden('Требуются права администратора') };

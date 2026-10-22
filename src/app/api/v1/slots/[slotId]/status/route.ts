@@ -8,7 +8,7 @@ export async function POST(
   { params }: { params: Promise<{ slotId: string }> }
 ) {
   try {
-    const auth = await authenticate();
+    const auth = await authenticate({}, req);
     if (!auth.ok) return auth.response;
 
     const { slotId } = await params;

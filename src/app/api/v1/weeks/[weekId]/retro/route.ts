@@ -11,7 +11,7 @@ export async function PATCH(
   { params }: { params: Promise<{ weekId: string }> }
 ) {
   try {
-    const auth = await authenticate({ roles: [Role.STUDENT] });
+    const auth = await authenticate({ roles: [Role.STUDENT] }, req);
     if (!auth.ok) return auth.response;
     const { weekId } = await params;
     const body = await req.json().catch(() => ({}));

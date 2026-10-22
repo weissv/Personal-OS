@@ -7,7 +7,7 @@ import { ALL_TIMETABLE_SLOTS } from '@/lib/timetable-data';
 
 export async function POST(req: NextRequest) {
   try {
-    const auth = await authenticate({ admin: true });
+    const auth = await authenticate({ admin: true }, req);
     if (!auth.ok) return auth.response;
 
     // 1. Ensure Curators

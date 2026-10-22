@@ -1,9 +1,9 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { getSessionContext, isUserGodmode } from '@/lib/auth';
 import { createSessionToken, getSessionCookieOptions, SESSION_COOKIE } from '@/lib/session';
 
-export async function GET() {
-  const ctx = await getSessionContext();
+export async function GET(req: NextRequest) {
+  const ctx = await getSessionContext(req);
   if (!ctx) {
     return NextResponse.json({ user: null, isGodmode: false, isImpersonating: false }, { status: 401 });
   }
