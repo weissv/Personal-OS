@@ -19,7 +19,8 @@ export async function GET() {
     ]);
 
     // Cohorts
-    const [grade9Count, grade10Count, grade11Count] = await Promise.all([
+    const [grade8Count, grade9Count, grade10Count, grade11Count] = await Promise.all([
+      prisma.user.count({ where: { role: 'STUDENT', gradeLevel: 8 } }),
       prisma.user.count({ where: { role: 'STUDENT', gradeLevel: 9 } }),
       prisma.user.count({ where: { role: 'STUDENT', gradeLevel: 10 } }),
       prisma.user.count({ where: { role: 'STUDENT', gradeLevel: 11 } }),
@@ -132,6 +133,7 @@ export async function GET() {
           total: studentsCount + mentorsCount + parentsCount + adminsCount,
         },
         cohorts: {
+          grade8: grade8Count,
           grade9: grade9Count,
           grade10: grade10Count,
           grade11: grade11Count,

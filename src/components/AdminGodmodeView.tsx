@@ -38,6 +38,7 @@ interface AdminStats {
     total: number;
   };
   cohorts: {
+    grade8?: number;
     grade9: number;
     grade10: number;
     grade11: number;
@@ -515,6 +516,25 @@ export const AdminGodmodeView: React.FC<AdminGodmodeViewProps> = ({ onSwitchToUs
               <div className="gm-cohorts-bars">
                 <div>
                   <div className="gm-bar-header">
+                    <span>8 класс</span>
+                    <span>{stats.cohorts.grade8 || 0} учеников</span>
+                  </div>
+                  <div className="gm-bar-track">
+                    <div
+                      className="gm-bar-fill bg-teal"
+                      style={{
+                        width: `${
+                          stats.users.students > 0
+                            ? ((stats.cohorts.grade8 || 0) / stats.users.students) * 100
+                            : 0
+                        }%`,
+                      }}
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <div className="gm-bar-header">
                     <span>9 класс</span>
                     <span>{stats.cohorts.grade9} учеников</span>
                   </div>
@@ -948,6 +968,7 @@ export const AdminGodmodeView: React.FC<AdminGodmodeViewProps> = ({ onSwitchToUs
                   onChange={(e) => setFormData({ ...formData, gradeLevel: parseInt(e.target.value, 10) })}
                   className="gm-select"
                 >
+                  <option value={8}>8 класс</option>
                   <option value={9}>9 класс</option>
                   <option value={10}>10 класс</option>
                   <option value={11}>11 класс (Выпускной)</option>
@@ -1019,7 +1040,7 @@ export const AdminGodmodeView: React.FC<AdminGodmodeViewProps> = ({ onSwitchToUs
 
             <div className="gm-tt-controls">
               <div className="gm-grade-pills">
-                {[9, 10, 11].map((g) => (
+                {[8, 9, 10, 11].map((g) => (
                   <button
                     key={g}
                     type="button"
