@@ -77,15 +77,41 @@ interface WeekData {
   };
 }
 
+/**
+ * Умная маршрутизация по дате и времени:
+ * - Вс -> Ретроспектива (retro, день 7)
+ * - Сб -> Проектный день / Самоподготовка (saturday, день 6)
+ * - Пн-Пт -> До 13:00 Утренний фокус, после 13:00 Вечерний дебрифинг
+ * При этом ручное переключение не блокируется.
+ */
+export function getSmartInitialSchedule(): { view: ViewMode; dayOfWeek: number } {
+  const now = new Date();
+  const rawDay = now.getDay(); // 0 = Вс, 1 = Пн, ..., 6 = Сб
+  const dayOfWeek = rawDay === 0 ? 7 : rawDay;
+  const currentHour = now.getHours();
+
+  if (dayOfWeek === 7) {
+    return { view: 'retro', dayOfWeek: 7 };
+  }
+  if (dayOfWeek === 6) {
+    return { view: 'saturday', dayOfWeek: 6 };
+  }
+  return {
+    view: currentHour < 13 ? 'morning' : 'evening',
+    dayOfWeek,
+  };
+}
+
 export default function Home() {
   const router = useRouter();
+  const smartInit = getSmartInitialSchedule();
   const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
   const [isGodmode, setIsGodmode] = useState(false);
   const [isImpersonating, setIsImpersonating] = useState(false);
   const [availableUsers, setAvailableUsers] = useState<AppUser[]>([]);
-  const [currentView, setCurrentView] = useState<ViewMode>('morning');
+  const [currentView, setCurrentView] = useState<ViewMode>(smartInit.view);
   const [selectedWeekNumber, setSelectedWeekNumber] = useState(1);
-  const [selectedDayOfWeek, setSelectedDayOfWeek] = useState(1);
+  const [selectedDayOfWeek, setSelectedDayOfWeek] = useState<number>(smartInit.dayOfWeek);
   const [isMobileDeviceFrame, setIsMobileDeviceFrame] = useState(false);
   const [isCoverOpen, setIsCoverOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -95,11 +121,29 @@ export default function Home() {
   const [sprintWeeks, setSprintWeeks] = useState<Array<{ weekNumber: number; isSubmitted: boolean }>>([]);
   const [currentWeekNum, setCurrentWeekNum] = useState(1);
 
-  // Fetch auth
+  // Fetch auth с поддержкой надёжного Bearer-токена из localStorage
   const loadUser = async () => {
     try {
-      const res = await fetch('/api/v1/auth/me');
+      let token: string | null = null;
+      if (typeof window !== 'undefined') {
+        try {
+          token = localStorage.getItem('mezon_auth_token');
+        } catch {}
+      }
+
+      const headers: Record<string, string> = {};
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+
+      const res = await fetch('/api/v1/auth/me', { headers });
       if (!res.ok) {
+        if (typeof window !== 'undefined') {
+          try {
+            localStorage.removeItem('mezon_auth_token');
+            localStorage.removeItem('mezon_auth_user');
+          } catch {}
+        }
         router.push('/login');
         return null;
       }
@@ -107,6 +151,13 @@ export default function Home() {
       if (!json.user) {
         router.push('/login');
         return null;
+      }
+
+      if (json.token && typeof window !== 'undefined') {
+        try {
+          localStorage.setItem('mezon_auth_token', json.token);
+          localStorage.setItem('mezon_auth_user', JSON.stringify(json.user));
+        } catch {}
       }
 
       setCurrentUser(json.user);
@@ -183,7 +234,10 @@ export default function Home() {
         } else if (user.role === 'PARENT') {
           setCurrentView('parent');
         } else {
-          setCurrentView('morning');
+          // Ученик: по дате и времени (до 13:00 утро, после 13:00 вечер)
+          const smart = getSmartInitialSchedule();
+          setCurrentView(smart.view);
+          setSelectedDayOfWeek(smart.dayOfWeek);
         }
         await loadSprintAndWeek();
       }
@@ -200,6 +254,12 @@ export default function Home() {
       });
       if (res.ok) {
         const json = await res.json();
+        if (json.token && typeof window !== 'undefined') {
+          try {
+            localStorage.setItem('mezon_auth_token', json.token);
+            localStorage.setItem('mezon_auth_user', JSON.stringify(json.user));
+          } catch {}
+        }
         setCurrentUser(json.user);
         setIsImpersonating(json.isImpersonating || false);
         if (json.user.role === 'MENTOR') {
@@ -209,7 +269,9 @@ export default function Home() {
         } else if (json.user.role === 'ADMIN') {
           setCurrentView('godmode');
         } else {
-          setCurrentView('morning');
+          const smart = getSmartInitialSchedule();
+          setCurrentView(smart.view);
+          setSelectedDayOfWeek(smart.dayOfWeek);
         }
         await loadSprintAndWeek();
       }
@@ -227,6 +289,12 @@ export default function Home() {
       });
       if (res.ok) {
         const json = await res.json();
+        if (json.token && typeof window !== 'undefined') {
+          try {
+            localStorage.setItem('mezon_auth_token', json.token);
+            localStorage.setItem('mezon_auth_user', JSON.stringify(json.user));
+          } catch {}
+        }
         setCurrentUser(json.user);
         setIsGodmode(true);
         setIsImpersonating(false);
@@ -239,6 +307,12 @@ export default function Home() {
 
   const handleLogout = async () => {
     try {
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.removeItem('mezon_auth_token');
+          localStorage.removeItem('mezon_auth_user');
+        } catch {}
+      }
       await fetch('/api/v1/auth/logout', { method: 'POST' });
     } finally {
       router.push('/login');
@@ -281,8 +355,13 @@ export default function Home() {
           setIsCoverOpen(false);
           setCurrentView(v);
           if (v === 'saturday') setSelectedDayOfWeek(6);
+          if (v === 'retro') setSelectedDayOfWeek(7);
           if (v === 'morning' || v === 'evening') {
-            if (selectedDayOfWeek > 5) setSelectedDayOfWeek(1);
+            if (selectedDayOfWeek > 5) {
+              const rawDay = new Date().getDay();
+              const todayDay = rawDay === 0 ? 7 : rawDay;
+              setSelectedDayOfWeek(todayDay <= 5 ? todayDay : 1);
+            }
           }
         }}
         currentUser={currentUser}
@@ -443,6 +522,7 @@ export default function Home() {
                 mediaAssets={weekData.mediaAssets}
                 onDebriefCompleted={() => loadSprintAndWeek(selectedWeekNumber)}
                 onSlotUpdated={() => loadSprintAndWeek(selectedWeekNumber)}
+                onNavigateToMorning={() => setCurrentView('morning')}
               />
             ) : currentView === 'saturday' && saturdayDay ? (
               <SaturdaySelfStudyView

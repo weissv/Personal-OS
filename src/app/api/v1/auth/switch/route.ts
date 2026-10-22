@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { authenticate, sanitizeUser } from '@/lib/auth';
-import { createSessionToken, SESSION_COOKIE, sessionCookieOptions } from '@/lib/session';
+import { createSessionToken, SESSION_COOKIE, getSessionCookieOptions } from '@/lib/session';
 import { audit } from '@/lib/audit';
 
 /**
@@ -19,8 +19,9 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => ({}));
 
     if (body.revertToAdmin) {
-      const response = NextResponse.json({ success: true, user: admin, isGodmode: true, isImpersonating: false });
-      response.cookies.set(SESSION_COOKIE, createSessionToken({ u: admin.id }), sessionCookieOptions);
+      const token = createSessionToken({ u: admin.id });
+      const response = NextResponse.json({ success: true, user: admin, isGodmode: true, isImpersonating: false, token });
+      response.cookies.set(SESSION_COOKIE, token, getSessionCookieOptions());
       return response;
     }
 
@@ -39,16 +40,18 @@ export async function POST(req: NextRequest) {
       });
     }
 
+    const token = createSessionToken(impersonating ? { u: target.id, a: admin.id } : { u: admin.id });
     const response = NextResponse.json({
       success: true,
       user: sanitizeUser(target),
       isGodmode: true,
       isImpersonating: impersonating,
+      token,
     });
     response.cookies.set(
       SESSION_COOKIE,
-      createSessionToken(impersonating ? { u: target.id, a: admin.id } : { u: admin.id }),
-      sessionCookieOptions
+      token,
+      getSessionCookieOptions()
     );
     return response;
   } catch (error) {

@@ -38,6 +38,7 @@ interface EveningDebriefViewProps {
   mediaAssets: MediaAsset[];
   onDebriefCompleted: () => void;
   onSlotUpdated: () => void;
+  onNavigateToMorning?: () => void;
 }
 
 export const EveningDebriefView: React.FC<EveningDebriefViewProps> = ({
@@ -49,6 +50,7 @@ export const EveningDebriefView: React.FC<EveningDebriefViewProps> = ({
   mediaAssets,
   onDebriefCompleted,
   onSlotUpdated,
+  onNavigateToMorning,
 }) => {
   const [slotStatusMap, setSlotStatusMap] = useState<
     Record<string, { status: string; deliverable?: string; taskGoal?: string; migrationTarget?: string }>
@@ -520,11 +522,22 @@ export const EveningDebriefView: React.FC<EveningDebriefViewProps> = ({
       </section>
 
       {/* Главное действие экрана */}
-      <div style={{ marginTop: 'var(--s6)' }}>
+      <div style={{ marginTop: 'var(--s6)', display: 'flex', flexDirection: 'column', gap: 10 }}>
         <button type="button" className="mz-btn mz-btn--primary mz-btn--lg mz-btn--block" onClick={handleBatchSync} disabled={isBatchSyncing}>
           {isBatchSyncing ? 'Сохраняю день…' : 'Завершить день'}
           {!isBatchSyncing && <Check size={18} />}
         </button>
+
+        {onNavigateToMorning && (
+          <button
+            type="button"
+            className="mz-btn mz-btn--outline mz-btn--block"
+            onClick={onNavigateToMorning}
+            style={{ fontSize: 13, color: '#555555' }}
+          >
+            ← Перейти к утреннему фокусу (до 13:00)
+          </button>
+        )}
       </div>
     </div>
   );

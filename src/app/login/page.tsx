@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { ShieldCheck, ArrowRight, Lock, User, ExternalLink, Eye, EyeOff, Loader2 } from 'lucide-react';
@@ -12,6 +12,35 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+
+  // Если сессия уже активна — мгновенно перенаправляем в дневник
+  useEffect(() => {
+    let active = true;
+    const checkExistingSession = async () => {
+      try {
+        let token: string | null = null;
+        if (typeof window !== 'undefined') {
+          try {
+            token = localStorage.getItem('mezon_auth_token');
+          } catch {}
+        }
+        const headers: Record<string, string> = {};
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+
+        const res = await fetch('/api/v1/auth/me', { headers });
+        if (res.ok && active) {
+          const json = await res.json();
+          if (json?.user) {
+            router.replace('/');
+          }
+        }
+      } catch {}
+    };
+    checkExistingSession();
+    return () => {
+      active = false;
+    };
+  }, [router]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -31,6 +60,14 @@ export default function LoginPage() {
         setError(data.error || 'Ошибка авторизации. Проверьте логин и пароль.');
         setIsLoading(false);
         return;
+      }
+
+      // Сохраняем надёжный токен в localStorage для резервной авторизации
+      if (data.token && typeof window !== 'undefined') {
+        try {
+          localStorage.setItem('mezon_auth_token', data.token);
+          localStorage.setItem('mezon_auth_user', JSON.stringify(data.user));
+        } catch {}
       }
 
       router.push('/');

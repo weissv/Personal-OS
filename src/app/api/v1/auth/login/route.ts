@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { burnPasswordCheck, verifyPassword } from '@/lib/password';
 import { isUserGodmode, sanitizeUser } from '@/lib/auth';
-import { createSessionToken, SESSION_COOKIE, sessionCookieOptions } from '@/lib/session';
+import { createSessionToken, SESSION_COOKIE, getSessionCookieOptions } from '@/lib/session';
 import { clientIp, rateLimit, resetRateLimit } from '@/lib/rate-limit';
 import { audit } from '@/lib/audit';
 
@@ -62,7 +62,7 @@ export async function POST(req: NextRequest) {
       isGodmode: isUserGodmode(user),
       token,
     });
-    response.cookies.set(SESSION_COOKIE, token, sessionCookieOptions);
+    response.cookies.set(SESSION_COOKIE, token, getSessionCookieOptions());
     return response;
   } catch (error) {
     console.error('Login error:', error);

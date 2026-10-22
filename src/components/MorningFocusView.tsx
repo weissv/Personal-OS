@@ -392,9 +392,19 @@ export const MorningFocusView: React.FC<MorningFocusViewProps> = ({
             </div>
           </div>
         ) : (
-          <button type="button" className="mz-btn mz-btn--primary mz-btn--lg mz-btn--block" onClick={() => setIsDayCommitted(true)}>
-            <Lock size={18} /> Готов сдать смартфон (08:00) <ArrowRight size={18} />
-          </button>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <button type="button" className="mz-btn mz-btn--primary mz-btn--lg mz-btn--block" onClick={() => setIsDayCommitted(true)}>
+              <Lock size={18} /> Готов сдать смартфон (08:00) <ArrowRight size={18} />
+            </button>
+            <button
+              type="button"
+              className="mz-btn mz-btn--outline mz-btn--block"
+              onClick={onNavigateToEvening}
+              style={{ fontSize: 13, color: '#555555' }}
+            >
+              Перейти к вечернему дебрифингу (после 13:00) →
+            </button>
+          </div>
         )}
       </div>
     </div>

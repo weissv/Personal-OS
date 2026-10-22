@@ -7,7 +7,7 @@ import crypto from 'crypto';
  * payload: { u: id эффективного пользователя, a?: id администратора (режим имперсонации), e: срок (ms) }
  */
 export const SESSION_COOKIE = 'mezon_session';
-export const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 7; // 7 дней
+export const SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 365; // 365 дней (1 учебный год)
 
 export interface SessionPayload {
   u: string;
@@ -66,6 +66,13 @@ export const sessionCookieOptions = {
   path: '/',
   maxAge: SESSION_MAX_AGE_SECONDS,
 };
+
+export function getSessionCookieOptions() {
+  return {
+    ...sessionCookieOptions,
+    expires: new Date(Date.now() + SESSION_MAX_AGE_SECONDS * 1000),
+  };
+}
 
 export const clearedCookieOptions = {
   httpOnly: true,
