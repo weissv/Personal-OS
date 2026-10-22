@@ -13,7 +13,7 @@ export interface StudentRedFlags {
   silentRetroSnippet?: string;
 }
 
-export async function GET() {
+export async function GET(req: Request) {
   try {
     // 1. Fetch all Grade 9 students
     const students = await prisma.user.findMany({
