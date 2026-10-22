@@ -42,6 +42,8 @@ model User {
   fullName      String
   role          Role      @default(STUDENT)
   gradeLevel    Int?      // e.g., 9
+  isActive      Boolean   @default(true)
+  lastLoginAt   DateTime?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
@@ -170,4 +172,34 @@ model ParentReview {
   signedAt      DateTime  @default(now())
 
   week          Week      @relation(fields: [weekId], references: [id], onDelete: Cascade)
+}
+
+// Шаблон расписания по параллелям: источник «призрачных» уроков при генерации спринта.
+// Редактируется администратором (Godmode → Расписание).
+model TimetableSlot {
+  id         String @id @default(uuid())
+  gradeLevel Int
+  dayOfWeek  Int    // 1 (Пн) .. 5 (Пт)
+  startTime  String // "08:30"
+  endTime    String // "09:15"
+  title      String
+  orderIndex Int    @default(0)
+
+  @@index([gradeLevel, dayOfWeek])
+}
+
+// Журнал действий администраторов и входов. Без FK на актора: история переживает удаление пользователей.
+model AuditLog {
+  id         String   @id @default(uuid())
+  actorId    String?
+  actorName  String
+  action     String
+  targetType String?
+  targetId   String?
+  targetName String?
+  details    String?
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([action])
 }

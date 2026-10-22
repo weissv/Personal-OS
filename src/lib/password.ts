@@ -1,8 +1,7 @@
 import crypto from 'crypto';
 
 /**
- * Hash a password using scrypt with a unique random salt.
- * Output format: `${salt}:${hash}`
+ * Хэш пароля: scrypt + индивидуальная соль. Формат: `${salt}:${hash}`.
  */
 export function hashPassword(password: string): string {
   const salt = crypto.randomBytes(16).toString('hex');
@@ -10,9 +9,6 @@ export function hashPassword(password: string): string {
   return `${salt}:${hash}`;
 }
 
-/**
- * Verify a plain-text password against a stored `${salt}:${hash}` string.
- */
 export function verifyPassword(password: string, storedHash: string | null | undefined): boolean {
   if (!storedHash || !password) return false;
   const parts = storedHash.split(':');
@@ -24,4 +20,11 @@ export function verifyPassword(password: string, storedHash: string | null | und
   } catch {
     return false;
   }
+}
+
+// Для несуществующего пользователя выполняем такую же работу, чтобы время ответа
+// не выдавало, существует ли логин.
+const DUMMY_HASH = hashPassword(crypto.randomBytes(12).toString('hex'));
+export function burnPasswordCheck(password: string) {
+  verifyPassword(password, DUMMY_HASH);
 }

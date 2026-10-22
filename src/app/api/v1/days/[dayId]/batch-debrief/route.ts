@@ -1,14 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { SlotStatus, SlotType } from '@prisma/client';
+import { authenticate, canAccessStudent, denyResponse, notFoundResponse, studentIdForDay } from '@/lib/auth';
 
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ dayId: string }> }
 ) {
   try {
+    const auth = await authenticate();
+    if (!auth.ok) return auth.response;
+
     const { dayId } = await params;
-    const body = await req.json();
+    const studentId = await studentIdForDay(dayId);
+    if (!studentId) return notFoundResponse('День не найден');
+
+    if (!(await canAccessStudent(auth.ctx, studentId, 'write'))) {
+      return denyResponse();
+    }
+
+    const body = await req.json().catch(() => ({}));
     const { updatedSlots = [], newCustomEvents = [] } = body;
 
     const day = await prisma.day.findUnique({
@@ -16,7 +27,7 @@ export async function POST(
     });
 
     if (!day) {
-      return NextResponse.json({ error: 'Day not found' }, { status: 404 });
+      return notFoundResponse('День не найден');
     }
 
     // Execute batch debrief in an atomic Prisma transaction
@@ -35,7 +46,6 @@ export async function POST(
         if (slot.status) updateData.status = slot.status as SlotStatus;
         if (slot.deliverable !== undefined) updateData.deliverable = slot.deliverable;
         if (slot.taskGoal !== undefined) updateData.taskGoal = slot.taskGoal;
-        // If debriefing, it's confirmed, not ghost
         updateData.isGhost = false;
 
         const updated = await tx.daySlot.update({

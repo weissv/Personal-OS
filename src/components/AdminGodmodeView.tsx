@@ -23,6 +23,10 @@ import {
   GraduationCap,
   HeartHandshake,
   UserCheck,
+  History,
+  Plus,
+  X,
+  RefreshCw,
 } from 'lucide-react';
 
 interface AdminStats {
@@ -70,9 +74,32 @@ interface AdminUser {
   email: string;
   role: 'STUDENT' | 'MENTOR' | 'PARENT' | 'ADMIN';
   gradeLevel: number | null;
+  isActive: boolean;
   sprintsCount: number;
   parents: Array<{ id: string; fullName: string; accessLevel: string }>;
   students: Array<{ id: string; fullName: string; accessLevel: string }>;
+  createdAt: string;
+}
+
+interface TimetableSlot {
+  id: string;
+  gradeLevel: number;
+  dayOfWeek: number;
+  startTime: string;
+  endTime: string;
+  title: string;
+  orderIndex: number;
+}
+
+interface AuditLogEntry {
+  id: string;
+  actorId: string | null;
+  actorName: string;
+  action: string;
+  targetType: string | null;
+  targetId: string | null;
+  targetName: string | null;
+  details: string | null;
   createdAt: string;
 }
 
@@ -80,13 +107,43 @@ interface AdminGodmodeViewProps {
   onSwitchToUser: (userId: string) => void;
 }
 
+type TabType = 'analytics' | 'users' | 'register' | 'timetable' | 'audit' | 'system';
+
+const DAY_NAMES: Record<number, string> = {
+  1: 'Понедельник',
+  2: 'Вторник',
+  3: 'Среда',
+  4: 'Четверг',
+  5: 'Пятница',
+  6: 'Суббота',
+  7: 'Воскресенье',
+};
+
 export const AdminGodmodeView: React.FC<AdminGodmodeViewProps> = ({ onSwitchToUser }) => {
-  const [activeTab, setActiveTab] = useState<'analytics' | 'users' | 'register' | 'system'>('analytics');
+  const [activeTab, setActiveTab] = useState<TabType>('analytics');
   const [stats, setStats] = useState<AdminStats | null>(null);
   const [users, setUsers] = useState<AdminUser[]>([]);
+  const [timetableSlots, setTimetableSlots] = useState<TimetableSlot[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [roleFilter, setRoleFilter] = useState<string>('ALL');
+  const [timetableGrade, setTimetableGrade] = useState<number>(9);
+
+  // Password reset modal state
+  const [passwordModalUser, setPasswordModalUser] = useState<AdminUser | null>(null);
+  const [newPassword, setNewPassword] = useState('');
+  const [passwordResetStatus, setPasswordResetStatus] = useState<string | null>(null);
+
+  // New timetable slot form
+  const [showAddSlotModal, setShowAddSlotModal] = useState(false);
+  const [newSlotForm, setNewSlotForm] = useState({
+    gradeLevel: 9,
+    dayOfWeek: 1,
+    startTime: '08:30',
+    endTime: '09:15',
+    title: '',
+  });
 
   // Register Form State
   const [formData, setFormData] = useState({
@@ -112,7 +169,7 @@ export const AdminGodmodeView: React.FC<AdminGodmodeViewProps> = ({ onSwitchToUs
         setStats(json.stats);
       }
     } catch (e) {
-      console.error(e);
+      console.error('Stats error:', e);
     }
   };
 
@@ -124,19 +181,51 @@ export const AdminGodmodeView: React.FC<AdminGodmodeViewProps> = ({ onSwitchToUs
         setUsers(json.users || []);
       }
     } catch (e) {
-      console.error(e);
+      console.error('Users error:', e);
+    }
+  };
+
+  const loadTimetable = async (grade = timetableGrade) => {
+    try {
+      const res = await fetch(`/api/v1/admin/timetable?grade=${grade}`);
+      if (res.ok) {
+        const json = await res.json();
+        setTimetableSlots(json.slots || []);
+      }
+    } catch (e) {
+      console.error('Timetable error:', e);
+    }
+  };
+
+  const loadAudit = async () => {
+    try {
+      const res = await fetch('/api/v1/admin/audit?limit=60');
+      if (res.ok) {
+        const json = await res.json();
+        setAuditLogs(json.logs || []);
+      }
+    } catch (e) {
+      console.error('Audit error:', e);
     }
   };
 
   const refreshAll = async () => {
     setIsLoading(true);
-    await Promise.all([loadStats(), loadUsers()]);
+    await Promise.all([loadStats(), loadUsers(), loadTimetable(), loadAudit()]);
     setIsLoading(false);
   };
 
   useEffect(() => {
     refreshAll();
   }, []);
+
+  useEffect(() => {
+    if (activeTab === 'timetable') {
+      loadTimetable(timetableGrade);
+    } else if (activeTab === 'audit') {
+      loadAudit();
+    }
+  }, [activeTab, timetableGrade]);
 
   const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -160,7 +249,7 @@ export const AdminGodmodeView: React.FC<AdminGodmodeViewProps> = ({ onSwitchToUs
       }
 
       setRegisterSuccess(
-        `Пользователь ${formData.fullName} успешно создан!` +
+        `Пользователь ${formData.fullName} успешно зарегистрирован!` +
           (formData.role === 'STUDENT' ? ' 10-недельный спринт и сетка уроков сгенерированы.' : '')
       );
       setFormData({
@@ -174,7 +263,7 @@ export const AdminGodmodeView: React.FC<AdminGodmodeViewProps> = ({ onSwitchToUs
         accessLevel: 'SUMMARY_ONLY',
       });
       refreshAll();
-    } catch (err) {
+    } catch {
       setRegisterError('Не удалось отправить запрос на сервер');
     } finally {
       setIsSubmitting(false);
@@ -194,8 +283,73 @@ export const AdminGodmodeView: React.FC<AdminGodmodeViewProps> = ({ onSwitchToUs
         const json = await res.json();
         alert(json.error || 'Не удалось удалить');
       }
-    } catch (e) {
+    } catch {
       alert('Ошибка при удалении');
+    }
+  };
+
+  const handleResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!passwordModalUser || !newPassword) return;
+
+    try {
+      const res = await fetch(`/api/v1/admin/users/${passwordModalUser.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: newPassword }),
+      });
+      if (res.ok) {
+        setPasswordResetStatus('Пароль успешно обновлен!');
+        setTimeout(() => {
+          setPasswordModalUser(null);
+          setNewPassword('');
+          setPasswordResetStatus(null);
+        }, 1200);
+      } else {
+        const json = await res.json();
+        setPasswordResetStatus(`Ошибка: ${json.error || 'Не удалось сбросить пароль'}`);
+      }
+    } catch {
+      setPasswordResetStatus('Ошибка при отправке запроса');
+    }
+  };
+
+  const handleAddTimetableSlot = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const res = await fetch('/api/v1/admin/timetable', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newSlotForm),
+      });
+      if (res.ok) {
+        setShowAddSlotModal(false);
+        setNewSlotForm({
+          gradeLevel: timetableGrade,
+          dayOfWeek: 1,
+          startTime: '08:30',
+          endTime: '09:15',
+          title: '',
+        });
+        loadTimetable(timetableGrade);
+      } else {
+        const json = await res.json();
+        alert(json.error || 'Не удалось добавить урок');
+      }
+    } catch {
+      alert('Ошибка при добавлении урока');
+    }
+  };
+
+  const handleDeleteTimetableSlot = async (id: string) => {
+    if (!confirm('Удалить урок из шаблона расписания?')) return;
+    try {
+      const res = await fetch(`/api/v1/admin/timetable?id=${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        loadTimetable(timetableGrade);
+      }
+    } catch {
+      alert('Ошибка при удалении урока');
     }
   };
 
@@ -211,68 +365,27 @@ export const AdminGodmodeView: React.FC<AdminGodmodeViewProps> = ({ onSwitchToUs
   const studentsList = users.filter((u) => u.role === 'STUDENT');
 
   return (
-    <div style={{ padding: '24px 32px', maxWidth: 1400, margin: '0 auto', color: '#121212' }}>
+    <div className="gm-root">
       {/* GODMODE Header Banner */}
-      <div
-        style={{
-          background: '#121212',
-          color: '#fff',
-          padding: '24px 32px',
-          borderLeft: '6px solid #a04a84',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          flexWrap: 'wrap',
-          gap: 16,
-          boxShadow: '0 8px 24px rgba(0,0,0,0.15)',
-          marginBottom: 28,
-        }}
-      >
-        <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
-            <span
-              style={{
-                background: '#a04a84',
-                color: '#fff',
-                fontSize: 11,
-                fontWeight: 800,
-                padding: '2px 8px',
-                letterSpacing: '1.5px',
-                textTransform: 'uppercase',
-              }}
-            >
-              ⚡ GODMODE CONTROL
-            </span>
-            <span style={{ color: '#fcd5a6', fontSize: 13, fontWeight: 700 }}>
-              Founder Console · somi
-            </span>
+      <div className="gm-banner">
+        <div className="gm-banner__info">
+          <div className="gm-badge-row">
+            <span className="gm-badge-godmode">⚡ GODMODE CONTROL</span>
+            <span className="gm-badge-user">Founder Console · somi</span>
           </div>
-          <h1 style={{ fontSize: 26, fontWeight: 800, margin: 0, letterSpacing: '-0.5px' }}>
-            Центр управления <span style={{ background: '#00859e', padding: '0 8px' }}>Mezon Sprint OS</span>
+          <h1 className="gm-title">
+            Центр управления <span className="gm-title-hl">Mezon Sprint OS</span>
           </h1>
-          <p style={{ color: 'rgba(255,255,255,0.65)', fontSize: 13, margin: '6px 0 0 0' }}>
-            Коммерческий запуск платформы · Управление школой, когортами, учениками и кураторами
+          <p className="gm-desc">
+            Коммерческий запуск платформы · Управление школой, когортами, учениками и наставниками
           </p>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div className="gm-banner__actions">
           <button
             type="button"
             onClick={() => setActiveTab('register')}
-            style={{
-              background: '#fcd5a6',
-              color: '#121212',
-              border: 'none',
-              padding: '10px 18px',
-              fontWeight: 800,
-              fontSize: 13,
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              textTransform: 'uppercase',
-              letterSpacing: '0.5px',
-            }}
+            className="gm-btn-register"
           >
             <UserPlus size={16} />
             <span>+ Зарегистрировать</span>
@@ -280,288 +393,213 @@ export const AdminGodmodeView: React.FC<AdminGodmodeViewProps> = ({ onSwitchToUs
           <button
             type="button"
             onClick={refreshAll}
-            style={{
-              background: 'rgba(255,255,255,0.1)',
-              color: '#fff',
-              border: '1px solid rgba(255,255,255,0.2)',
-              padding: '10px 14px',
-              fontWeight: 700,
-              fontSize: 13,
-              cursor: 'pointer',
-            }}
+            className="gm-btn-refresh"
+            title="Обновить все данные"
           >
-            Обновить данные
+            <RefreshCw size={14} />
+            <span>Обновить</span>
           </button>
         </div>
       </div>
 
       {/* Tabs navigation */}
-      <div style={{ display: 'flex', borderBottom: '2px solid #e0e0e0', marginBottom: 28, gap: 8 }}>
-        <button
-          type="button"
-          onClick={() => setActiveTab('analytics')}
-          style={{
-            padding: '12px 20px',
-            background: 'none',
-            border: 'none',
-            borderBottom: activeTab === 'analytics' ? '3px solid #00859e' : '3px solid transparent',
-            color: activeTab === 'analytics' ? '#00859e' : '#5f5f5f',
-            fontWeight: 800,
-            fontSize: 14,
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-          }}
-        >
-          <BarChart3 size={18} />
-          <span>Аналитика и когорты</span>
-        </button>
+      <div className="gm-tabs-scroll">
+        <div className="gm-tabs">
+          <button
+            type="button"
+            onClick={() => setActiveTab('analytics')}
+            className={`gm-tab ${activeTab === 'analytics' ? 'gm-tab--active' : ''}`}
+          >
+            <BarChart3 size={16} />
+            <span>Аналитика и когорты</span>
+          </button>
 
-        <button
-          type="button"
-          onClick={() => setActiveTab('users')}
-          style={{
-            padding: '12px 20px',
-            background: 'none',
-            border: 'none',
-            borderBottom: activeTab === 'users' ? '3px solid #00859e' : '3px solid transparent',
-            color: activeTab === 'users' ? '#00859e' : '#5f5f5f',
-            fontWeight: 800,
-            fontSize: 14,
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-          }}
-        >
-          <Users size={18} />
-          <span>Реестр пользователей ({users.length})</span>
-        </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('users')}
+            className={`gm-tab ${activeTab === 'users' ? 'gm-tab--active' : ''}`}
+          >
+            <Users size={16} />
+            <span>Пользователи ({users.length})</span>
+          </button>
 
-        <button
-          type="button"
-          onClick={() => setActiveTab('register')}
-          style={{
-            padding: '12px 20px',
-            background: 'none',
-            border: 'none',
-            borderBottom: activeTab === 'register' ? '3px solid #00859e' : '3px solid transparent',
-            color: activeTab === 'register' ? '#00859e' : '#5f5f5f',
-            fontWeight: 800,
-            fontSize: 14,
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-          }}
-        >
-          <UserPlus size={18} />
-          <span>Регистрация пользователя</span>
-        </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('register')}
+            className={`gm-tab ${activeTab === 'register' ? 'gm-tab--active' : ''}`}
+          >
+            <UserPlus size={16} />
+            <span>Онбординг</span>
+          </button>
 
-        <button
-          type="button"
-          onClick={() => setActiveTab('system')}
-          style={{
-            padding: '12px 20px',
-            background: 'none',
-            border: 'none',
-            borderBottom: activeTab === 'system' ? '3px solid #00859e' : '3px solid transparent',
-            color: activeTab === 'system' ? '#00859e' : '#5f5f5f',
-            fontWeight: 800,
-            fontSize: 14,
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-          }}
-        >
-          <Database size={18} />
-          <span>Готовность к продакшну</span>
-        </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('timetable')}
+            className={`gm-tab ${activeTab === 'timetable' ? 'gm-tab--active' : ''}`}
+          >
+            <Calendar size={16} />
+            <span>Расписание</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('audit')}
+            className={`gm-tab ${activeTab === 'audit' ? 'gm-tab--active' : ''}`}
+          >
+            <History size={16} />
+            <span>Аудит действий</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('system')}
+            className={`gm-tab ${activeTab === 'system' ? 'gm-tab--active' : ''}`}
+          >
+            <Database size={16} />
+            <span>Готовность сервера</span>
+          </button>
+        </div>
       </div>
 
       {/* TAB 1: ANALYTICS & COHORTS */}
       {activeTab === 'analytics' && stats && (
-        <div>
+        <div className="gm-section">
           {/* Key Metric Tiles */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16, marginBottom: 28 }}>
-            <div style={{ background: '#f6f6f6', border: '1px solid #c8c8c8', padding: '18px 20px' }}>
-              <div style={{ color: '#5f5f5f', fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '1px' }}>
-                Всего учеников
-              </div>
-              <div style={{ fontSize: 32, fontWeight: 900, color: '#121212', marginTop: 4 }}>
-                {stats.users.students}
-              </div>
-              <div style={{ fontSize: 12, color: '#00859e', fontWeight: 600, marginTop: 4 }}>
-                Активных спринтов: {stats.sprints.total}
-              </div>
+          <div className="gm-metrics-grid">
+            <div className="gm-card-metric">
+              <div className="gm-card-metric__label">Всего учеников</div>
+              <div className="gm-card-metric__value">{stats.users.students}</div>
+              <div className="gm-card-metric__sub text-teal">Активных спринтов: {stats.sprints.total}</div>
             </div>
 
-            <div style={{ background: '#f6f6f6', border: '1px solid #c8c8c8', padding: '18px 20px' }}>
-              <div style={{ color: '#5f5f5f', fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '1px' }}>
-                Кураторы / Наставники
-              </div>
-              <div style={{ fontSize: 32, fontWeight: 900, color: '#121212', marginTop: 4 }}>
-                {stats.users.mentors}
-              </div>
-              <div style={{ fontSize: 12, color: '#a04a84', fontWeight: 600, marginTop: 4 }}>
-                Закреплены за классами
-              </div>
+            <div className="gm-card-metric">
+              <div className="gm-card-metric__label">Кураторы / Наставники</div>
+              <div className="gm-card-metric__value">{stats.users.mentors}</div>
+              <div className="gm-card-metric__sub text-magenta">Закреплены за классами</div>
             </div>
 
-            <div style={{ background: '#f6f6f6', border: '1px solid #c8c8c8', padding: '18px 20px' }}>
-              <div style={{ color: '#5f5f5f', fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '1px' }}>
-                Родительский контроль
-              </div>
-              <div style={{ fontSize: 32, fontWeight: 900, color: '#121212', marginTop: 4 }}>
-                {stats.users.parents}
-              </div>
-              <div style={{ fontSize: 12, color: '#6b70a3', fontWeight: 600, marginTop: 4 }}>
-                Selective Trust портал
-              </div>
+            <div className="gm-card-metric">
+              <div className="gm-card-metric__label">Родительский контроль</div>
+              <div className="gm-card-metric__value">{stats.users.parents}</div>
+              <div className="gm-card-metric__sub text-indigo">Selective Trust портал</div>
             </div>
 
-            <div style={{ background: '#f6f6f6', border: '1px solid #c8c8c8', padding: '18px 20px' }}>
-              <div style={{ color: '#5f5f5f', fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '1px' }}>
-                Выполнение слотов
-              </div>
-              <div style={{ fontSize: 32, fontWeight: 900, color: '#00859e', marginTop: 4 }}>
-                {stats.slots.completionRate}%
-              </div>
-              <div style={{ fontSize: 12, color: '#5f5f5f', marginTop: 4 }}>
+            <div className="gm-card-metric">
+              <div className="gm-card-metric__label">Выполнение слотов</div>
+              <div className="gm-card-metric__value text-teal">{stats.slots.completionRate}%</div>
+              <div className="gm-card-metric__sub">
                 {stats.slots.done} из {stats.slots.total} слотов
               </div>
             </div>
 
-            <div style={{ background: '#f6f6f6', border: '1px solid #c8c8c8', padding: '18px 20px' }}>
-              <div style={{ color: '#5f5f5f', fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '1px' }}>
-                Переносы задач
-              </div>
-              <div style={{ fontSize: 32, fontWeight: 900, color: stats.slots.migrationRate > 30 ? '#c0392b' : '#121212', marginTop: 4 }}>
+            <div className="gm-card-metric">
+              <div className="gm-card-metric__label">Переносы задач</div>
+              <div
+                className={`gm-card-metric__value ${
+                  stats.slots.migrationRate > 30 ? 'text-red' : ''
+                }`}
+              >
                 {stats.slots.migrationRate}%
               </div>
-              <div style={{ fontSize: 12, color: '#5f5f5f', marginTop: 4 }}>
-                {stats.slots.migrated} слотов перенесено
-              </div>
+              <div className="gm-card-metric__sub">{stats.slots.migrated} слотов перенесено</div>
             </div>
           </div>
 
           {/* Cohorts & Risk Flags Grid */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, marginBottom: 28 }}>
+          <div className="gm-split-grid">
             {/* Cohorts breakdown */}
-            <div style={{ background: '#fff', border: '2px solid #222', padding: 24 }}>
-              <div style={{ fontSize: 12, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '1.5px', color: '#a04a84', marginBottom: 12 }}>
-                Когорты школы (Классы)
-              </div>
-              <h2 style={{ fontSize: 18, fontWeight: 800, margin: '0 0 16px 0' }}>
-                Распределение учеников по параллелям
-              </h2>
+            <div className="gm-box">
+              <div className="gm-box-subtitle text-magenta">Когорты школы (Классы)</div>
+              <h2 className="gm-box-title">Распределение учеников по параллелям</h2>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              <div className="gm-cohorts-bars">
                 <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, fontWeight: 700, marginBottom: 4 }}>
+                  <div className="gm-bar-header">
                     <span>9 класс</span>
                     <span>{stats.cohorts.grade9} учеников</span>
                   </div>
-                  <div style={{ height: 10, background: '#e0e0e0', overflow: 'hidden' }}>
+                  <div className="gm-bar-track">
                     <div
+                      className="gm-bar-fill bg-teal"
                       style={{
-                        height: '100%',
-                        background: '#00859e',
-                        width: `${stats.users.students > 0 ? (stats.cohorts.grade9 / stats.users.students) * 100 : 0}%`,
+                        width: `${
+                          stats.users.students > 0
+                            ? (stats.cohorts.grade9 / stats.users.students) * 100
+                            : 0
+                        }%`,
                       }}
                     />
                   </div>
                 </div>
 
                 <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, fontWeight: 700, marginBottom: 4 }}>
+                  <div className="gm-bar-header">
                     <span>10 класс</span>
                     <span>{stats.cohorts.grade10} учеников</span>
                   </div>
-                  <div style={{ height: 10, background: '#e0e0e0', overflow: 'hidden' }}>
+                  <div className="gm-bar-track">
                     <div
+                      className="gm-bar-fill bg-magenta"
                       style={{
-                        height: '100%',
-                        background: '#a04a84',
-                        width: `${stats.users.students > 0 ? (stats.cohorts.grade10 / stats.users.students) * 100 : 0}%`,
+                        width: `${
+                          stats.users.students > 0
+                            ? (stats.cohorts.grade10 / stats.users.students) * 100
+                            : 0
+                        }%`,
                       }}
                     />
                   </div>
                 </div>
 
                 <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, fontWeight: 700, marginBottom: 4 }}>
+                  <div className="gm-bar-header">
                     <span>11 класс (Выпускной)</span>
                     <span>{stats.cohorts.grade11} учеников</span>
                   </div>
-                  <div style={{ height: 10, background: '#e0e0e0', overflow: 'hidden' }}>
+                  <div className="gm-bar-track">
                     <div
+                      className="gm-bar-fill bg-indigo"
                       style={{
-                        height: '100%',
-                        background: '#6b70a3',
-                        width: `${stats.users.students > 0 ? (stats.cohorts.grade11 / stats.users.students) * 100 : 0}%`,
+                        width: `${
+                          stats.users.students > 0
+                            ? (stats.cohorts.grade11 / stats.users.students) * 100
+                            : 0
+                        }%`,
                       }}
                     />
                   </div>
                 </div>
               </div>
 
-              <div style={{ marginTop: 24, paddingTop: 16, borderTop: '1px solid #e0e0e0', fontSize: 13, color: '#5f5f5f' }}>
-                * Все новые ученики автоматически получают 10-недельный спринт четверти с расписанием соответствующего класса.
+              <div className="gm-hint-note">
+                * Новые ученики автоматически получают 10-недельный спринт четверти с расписанием соответствующего класса.
               </div>
             </div>
 
             {/* Red Flag Students (At-Risk) */}
-            <div style={{ background: '#fff', border: '2px solid #c0392b', padding: 24 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#c0392b', fontSize: 12, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '1.5px', marginBottom: 12 }}>
+            <div className="gm-box gm-box--danger">
+              <div className="gm-danger-title">
                 <ShieldAlert size={16} />
                 <span>Зона внимания кураторов · Красные флаги</span>
               </div>
-              <h2 style={{ fontSize: 18, fontWeight: 800, margin: '0 0 16px 0' }}>
+              <h2 className="gm-box-title">
                 Ученики, требующие вмешательства ({stats.atRiskStudents.length})
               </h2>
 
               {stats.atRiskStudents.length === 0 ? (
-                <div style={{ padding: 20, textAlign: 'center', color: '#00859e', fontWeight: 600 }}>
-                  ✓ Все ученики стабильно соблюдают субъектный ритм!
-                </div>
+                <div className="gm-empty-check">✓ Все ученики стабильно соблюдают субъектный ритм!</div>
               ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div className="gm-risk-list">
                   {stats.atRiskStudents.map((st) => (
-                    <div
-                      key={st.id}
-                      style={{
-                        background: '#fff8f7',
-                        border: '1px solid #fab1a0',
-                        padding: '12px 16px',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                      }}
-                    >
+                    <div key={st.id} className="gm-risk-item">
                       <div>
-                        <div style={{ fontWeight: 800, fontSize: 14 }}>
+                        <div className="gm-risk-name">
                           {st.fullName}{' '}
-                          <span style={{ fontSize: 12, color: '#5f5f5f', fontWeight: 400 }}>
-                            ({st.gradeLevel} класс)
-                          </span>
+                          <span className="gm-risk-grade">({st.gradeLevel} класс)</span>
                         </div>
-                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 4 }}>
+                        <div className="gm-flags-row">
                           {st.flags.map((fl, idx) => (
-                            <span
-                              key={idx}
-                              style={{
-                                background: '#c0392b',
-                                color: '#fff',
-                                fontSize: 10,
-                                fontWeight: 700,
-                                padding: '1px 6px',
-                                textTransform: 'uppercase',
-                              }}
-                            >
+                            <span key={idx} className="gm-flag-tag">
                               {fl}
                             </span>
                           ))}
@@ -571,18 +609,7 @@ export const AdminGodmodeView: React.FC<AdminGodmodeViewProps> = ({ onSwitchToUs
                       <button
                         type="button"
                         onClick={() => onSwitchToUser(st.id)}
-                        style={{
-                          background: '#121212',
-                          color: '#fff',
-                          border: 'none',
-                          padding: '6px 12px',
-                          fontSize: 12,
-                          fontWeight: 700,
-                          cursor: 'pointer',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 6,
-                        }}
+                        className="gm-btn-inspect"
                       >
                         <Eye size={12} />
                         <span>Инспектировать</span>
@@ -598,44 +625,27 @@ export const AdminGodmodeView: React.FC<AdminGodmodeViewProps> = ({ onSwitchToUs
 
       {/* TAB 2: USERS REGISTRY & IMPERSONATION */}
       {activeTab === 'users' && (
-        <div style={{ background: '#fff', border: '2px solid #222', padding: 24 }}>
+        <div className="gm-box">
           {/* Filters Bar */}
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 16, marginBottom: 20 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, minWidth: 260 }}>
+          <div className="gm-filter-bar">
+            <div className="gm-search-input-wrap">
               <Search size={18} color="#5f5f5f" />
               <input
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Поиск по имени, логину или email…"
-                style={{
-                  flex: 1,
-                  padding: '10px 14px',
-                  border: '1.5px solid #c8c8c8',
-                  fontSize: 14,
-                  outline: 'none',
-                }}
+                className="gm-search-input"
               />
             </div>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span style={{ fontSize: 12, fontWeight: 700, color: '#5f5f5f', textTransform: 'uppercase' }}>
-                Роль:
-              </span>
+            <div className="gm-role-pills">
               {['ALL', 'STUDENT', 'MENTOR', 'PARENT', 'ADMIN'].map((r) => (
                 <button
                   key={r}
                   type="button"
                   onClick={() => setRoleFilter(r)}
-                  style={{
-                    background: roleFilter === r ? '#00859e' : '#f0f0f0',
-                    color: roleFilter === r ? '#fff' : '#222',
-                    border: 'none',
-                    padding: '6px 12px',
-                    fontSize: 12,
-                    fontWeight: 700,
-                    cursor: 'pointer',
-                  }}
+                  className={`gm-role-pill ${roleFilter === r ? 'gm-role-pill--active' : ''}`}
                 >
                   {r === 'ALL'
                     ? 'Все'
@@ -651,135 +661,100 @@ export const AdminGodmodeView: React.FC<AdminGodmodeViewProps> = ({ onSwitchToUs
             </div>
           </div>
 
-          {/* Users Table */}
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+          {/* Desktop Table */}
+          <div className="gm-table-container">
+            <table className="gm-table">
               <thead>
-                <tr style={{ background: '#121212', color: '#fff', fontSize: 12, textTransform: 'uppercase', letterSpacing: '1px' }}>
-                  <th style={{ padding: '12px 16px' }}>Пользователь</th>
-                  <th style={{ padding: '12px 16px' }}>Логин / Email</th>
-                  <th style={{ padding: '12px 16px' }}>Роль</th>
-                  <th style={{ padding: '12px 16px' }}>Класс</th>
-                  <th style={{ padding: '12px 16px' }}>Связи / Спринт</th>
-                  <th style={{ padding: '12px 16px', textAlign: 'right' }}>Действия</th>
+                <tr>
+                  <th>Пользователь</th>
+                  <th>Логин / Email</th>
+                  <th>Роль</th>
+                  <th>Класс</th>
+                  <th>Спринт / Связи</th>
+                  <th style={{ textAlign: 'right' }}>Действия</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredUsers.length === 0 ? (
                   <tr>
-                    <td colSpan={6} style={{ padding: 32, textAlign: 'center', color: '#5f5f5f' }}>
+                    <td colSpan={6} className="gm-td-empty">
                       Пользователи не найдены
                     </td>
                   </tr>
                 ) : (
                   filteredUsers.map((u) => (
-                    <tr
-                      key={u.id}
-                      style={{
-                        borderBottom: '1px solid #e0e0e0',
-                        fontSize: 13,
-                        transition: 'background 0.2s',
-                      }}
-                      onMouseOver={(e) => (e.currentTarget.style.background = '#f9f9f9')}
-                      onMouseOut={(e) => (e.currentTarget.style.background = 'transparent')}
-                    >
-                      <td style={{ padding: '14px 16px', fontWeight: 700 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          {u.username === 'somi' && <span style={{ color: '#a04a84' }}>⚡</span>}
+                    <tr key={u.id} className="gm-tr">
+                      <td className="gm-td-user">
+                        <div className="gm-user-name">
+                          {u.username === 'somi' && <span className="text-magenta">⚡</span>}
                           <span>{u.fullName}</span>
                         </div>
                       </td>
-                      <td style={{ padding: '14px 16px' }}>
-                        <div style={{ fontFamily: 'monospace', fontWeight: 600 }}>@{u.username || '—'}</div>
-                        <div style={{ fontSize: 12, color: '#5f5f5f' }}>{u.email}</div>
+                      <td>
+                        <div className="gm-username">@{u.username || '—'}</div>
+                        <div className="gm-email">{u.email}</div>
                       </td>
-                      <td style={{ padding: '14px 16px' }}>
-                        <span
-                          style={{
-                            background:
-                              u.role === 'ADMIN'
-                                ? '#a04a84'
-                                : u.role === 'MENTOR'
-                                ? '#00859e'
-                                : u.role === 'PARENT'
-                                ? '#6b70a3'
-                                : '#fcd5a6',
-                            color: u.role === 'STUDENT' ? '#121212' : '#fff',
-                            fontSize: 11,
-                            fontWeight: 800,
-                            padding: '3px 8px',
-                            textTransform: 'uppercase',
-                            letterSpacing: '0.5px',
-                          }}
-                        >
+                      <td>
+                        <span className={`gm-role-tag gm-role-tag--${u.role.toLowerCase()}`}>
                           {u.role}
                         </span>
                       </td>
-                      <td style={{ padding: '14px 16px', fontWeight: 600 }}>
+                      <td className="gm-td-grade">
                         {u.gradeLevel ? `${u.gradeLevel} класс` : '—'}
                       </td>
-                      <td style={{ padding: '14px 16px' }}>
+                      <td>
                         {u.role === 'STUDENT' && (
-                          <span style={{ color: '#00859e', fontWeight: 600 }}>
+                          <span className="text-teal font-semibold">
                             {u.sprintsCount > 0 ? `${u.sprintsCount} спринт(а)` : 'Нет спринта'}
                           </span>
                         )}
                         {u.role === 'PARENT' && (
-                          <div style={{ fontSize: 12, color: '#5f5f5f' }}>
+                          <span className="gm-muted">
                             {u.students.length > 0 ? `Ученик: ${u.students[0].fullName}` : 'Не привязан'}
-                          </div>
+                          </span>
                         )}
                         {u.role === 'MENTOR' && (
-                          <span style={{ fontSize: 12, color: '#5f5f5f' }}>
+                          <span className="gm-muted">
                             Куратор {u.gradeLevel ? `${u.gradeLevel} класса` : 'школы'}
                           </span>
                         )}
                         {u.role === 'ADMIN' && (
-                          <span style={{ color: '#a04a84', fontWeight: 700 }}>Полный доступ</span>
+                          <span className="text-magenta font-bold">Полный доступ</span>
                         )}
                       </td>
-                      <td style={{ padding: '14px 16px', textAlign: 'right' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 6 }}>
-                          {/* Impersonate button */}
+                      <td style={{ textAlign: 'right' }}>
+                        <div className="gm-actions-row">
                           {u.username !== 'somi' && (
                             <button
                               type="button"
                               onClick={() => onSwitchToUser(u.id)}
                               title={`Войти от лица ${u.fullName}`}
-                              style={{
-                                background: '#121212',
-                                color: '#fff',
-                                border: 'none',
-                                padding: '6px 10px',
-                                fontSize: 12,
-                                fontWeight: 700,
-                                cursor: 'pointer',
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: 4,
-                              }}
+                              className="gm-btn-act gm-btn-act--enter"
                             >
                               <Eye size={12} />
                               <span>Войти</span>
                             </button>
                           )}
-
-                          {/* Delete button (except somi) */}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setPasswordModalUser(u);
+                              setNewPassword('');
+                              setPasswordResetStatus(null);
+                            }}
+                            title="Сменить пароль"
+                            className="gm-btn-act gm-btn-act--pwd"
+                          >
+                            <KeyRound size={12} />
+                          </button>
                           {u.username !== 'somi' && (
                             <button
                               type="button"
                               onClick={() => handleDeleteUser(u.id, u.fullName)}
                               title="Удалить пользователя"
-                              style={{
-                                background: '#f8d7da',
-                                color: '#721c24',
-                                border: '1px solid #f5c6cb',
-                                padding: '6px 8px',
-                                fontSize: 12,
-                                cursor: 'pointer',
-                              }}
+                              className="gm-btn-act gm-btn-act--del"
                             >
-                              <Trash2 size={13} />
+                              <Trash2 size={12} />
                             </button>
                           )}
                         </div>
@@ -790,88 +765,120 @@ export const AdminGodmodeView: React.FC<AdminGodmodeViewProps> = ({ onSwitchToUs
               </tbody>
             </table>
           </div>
+
+          {/* Mobile Cards View */}
+          <div className="gm-cards-mobile">
+            {filteredUsers.length === 0 ? (
+              <div className="gm-td-empty">Пользователи не найдены</div>
+            ) : (
+              filteredUsers.map((u) => (
+                <div key={u.id} className="gm-user-card">
+                  <div className="gm-user-card__head">
+                    <div>
+                      <div className="gm-user-card__name">
+                        {u.username === 'somi' && <span className="text-magenta">⚡</span>}
+                        {u.fullName}
+                      </div>
+                      <div className="gm-user-card__login">@{u.username || '—'} · {u.email}</div>
+                    </div>
+                    <span className={`gm-role-tag gm-role-tag--${u.role.toLowerCase()}`}>
+                      {u.role}
+                    </span>
+                  </div>
+
+                  <div className="gm-user-card__meta">
+                    {u.gradeLevel && <span>Класс: {u.gradeLevel}</span>}
+                    {u.role === 'STUDENT' && (
+                      <span className="text-teal font-semibold">
+                        {u.sprintsCount > 0 ? `${u.sprintsCount} спринт` : 'Без спринта'}
+                      </span>
+                    )}
+                    {u.role === 'PARENT' && u.students.length > 0 && (
+                      <span>Ученик: {u.students[0].fullName}</span>
+                    )}
+                  </div>
+
+                  <div className="gm-user-card__footer">
+                    {u.username !== 'somi' && (
+                      <button
+                        type="button"
+                        onClick={() => onSwitchToUser(u.id)}
+                        className="gm-btn-act gm-btn-act--enter"
+                      >
+                        <Eye size={12} />
+                        <span>Войти</span>
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPasswordModalUser(u);
+                        setNewPassword('');
+                        setPasswordResetStatus(null);
+                      }}
+                      className="gm-btn-act gm-btn-act--pwd"
+                    >
+                      <KeyRound size={12} />
+                      <span>Пароль</span>
+                    </button>
+                    {u.username !== 'somi' && (
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteUser(u.id, u.fullName)}
+                        className="gm-btn-act gm-btn-act--del"
+                      >
+                        <Trash2 size={12} />
+                        <span>Удалить</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
         </div>
       )}
 
       {/* TAB 3: REGISTER NEW USER */}
       {activeTab === 'register' && (
-        <div style={{ background: '#fff', border: '2px solid #222', padding: 32, maxWidth: 800 }}>
-          <div style={{ fontSize: 12, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '1.5px', color: '#a04a84', marginBottom: 8 }}>
-            Онбординг участников школы
-          </div>
-          <h2 style={{ fontSize: 22, fontWeight: 900, margin: '0 0 8px 0' }}>
-            Регистрация нового пользователя
-          </h2>
-          <p style={{ color: '#5f5f5f', fontSize: 14, margin: '0 0 24px 0' }}>
-            При создании ученика автоматически формируется 10-недельный спринт «1 четверть» со стандартной сеткой предметов и субботней проектной лабораторией.
+        <div className="gm-box gm-box--narrow">
+          <div className="gm-box-subtitle text-magenta">Онбординг участников школы</div>
+          <h2 className="gm-box-title">Регистрация нового пользователя</h2>
+          <p className="gm-box-desc">
+            При создании ученика автоматически формируется 10-недельный спринт четверти с расписанием предметов выбранного класса и проектной субботой.
           </p>
 
           {registerSuccess && (
-            <div
-              style={{
-                background: '#e8f8f5',
-                border: '1px solid #2ecc71',
-                color: '#27ae60',
-                padding: '14px 16px',
-                fontWeight: 600,
-                fontSize: 14,
-                marginBottom: 20,
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-              }}
-            >
+            <div className="gm-alert-success">
               <CheckCircle2 size={18} />
               <span>{registerSuccess}</span>
             </div>
           )}
 
           {registerError && (
-            <div
-              style={{
-                background: '#fdeeed',
-                border: '1px solid #e74c3c',
-                color: '#c0392b',
-                padding: '14px 16px',
-                fontWeight: 600,
-                fontSize: 14,
-                marginBottom: 20,
-              }}
-            >
+            <div className="gm-alert-danger">
               ✕ {registerError}
             </div>
           )}
 
           <form onSubmit={handleRegisterSubmit}>
             {/* Role picker buttons */}
-            <div style={{ marginBottom: 20 }}>
-              <label style={{ display: 'block', fontSize: 12, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '1px', marginBottom: 8 }}>
-                Роль в системе:
-              </label>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
+            <div className="gm-form-group">
+              <label className="gm-form-label">Роль в системе *</label>
+              <div className="gm-role-grid">
                 {[
                   { r: 'STUDENT', label: 'Ученик', icon: <GraduationCap size={16} /> },
                   { r: 'MENTOR', label: 'Куратор', icon: <UserCheck size={16} /> },
                   { r: 'PARENT', label: 'Родитель', icon: <HeartHandshake size={16} /> },
-                  { r: 'ADMIN', label: 'Администратор', icon: <Sparkles size={16} /> },
+                  { r: 'ADMIN', label: 'Админ', icon: <Sparkles size={16} /> },
                 ].map(({ r, label, icon }) => (
                   <button
                     key={r}
                     type="button"
                     onClick={() => setFormData({ ...formData, role: r })}
-                    style={{
-                      padding: '12px 10px',
-                      background: formData.role === r ? '#121212' : '#f0f0f0',
-                      color: formData.role === r ? '#fff' : '#222',
-                      border: formData.role === r ? '2px solid #a04a84' : '2px solid transparent',
-                      fontWeight: 800,
-                      fontSize: 13,
-                      cursor: 'pointer',
-                      display: 'flex',
-                      flexDirection: 'column',
-                      alignItems: 'center',
-                      gap: 6,
-                    }}
+                    className={`gm-role-choice ${
+                      formData.role === r ? 'gm-role-choice--active' : ''
+                    }`}
                   >
                     {icon}
                     <span>{label}</span>
@@ -881,76 +888,65 @@ export const AdminGodmodeView: React.FC<AdminGodmodeViewProps> = ({ onSwitchToUs
             </div>
 
             {/* Inputs grid */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18, marginBottom: 18 }}>
-              <div>
-                <label style={{ display: 'block', fontSize: 12, fontWeight: 800, textTransform: 'uppercase', marginBottom: 6 }}>
-                  ФИО пользователя *
-                </label>
+            <div className="gm-form-row">
+              <div className="gm-form-group">
+                <label className="gm-form-label">ФИО пользователя *</label>
                 <input
                   type="text"
                   required
-                  placeholder="Камиль Ахмедов"
+                  placeholder="Азиз Каримов"
                   value={formData.fullName}
                   onChange={(e) => setFormData({ ...formData, fullName: e.target.value })}
-                  style={{ width: '100%', padding: '10px 12px', border: '1.5px solid #c8c8c8', fontSize: 14 }}
+                  className="gm-input"
                 />
               </div>
 
-              <div>
-                <label style={{ display: 'block', fontSize: 12, fontWeight: 800, textTransform: 'uppercase', marginBottom: 6 }}>
-                  Логин (Username) *
-                </label>
+              <div className="gm-form-group">
+                <label className="gm-form-label">Логин (Username) *</label>
                 <input
                   type="text"
                   required
-                  placeholder="kamil"
+                  placeholder="aziz"
                   value={formData.username}
                   onChange={(e) => setFormData({ ...formData, username: e.target.value })}
-                  style={{ width: '100%', padding: '10px 12px', border: '1.5px solid #c8c8c8', fontSize: 14 }}
+                  className="gm-input"
                 />
               </div>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18, marginBottom: 18 }}>
-              <div>
-                <label style={{ display: 'block', fontSize: 12, fontWeight: 800, textTransform: 'uppercase', marginBottom: 6 }}>
-                  Email *
-                </label>
+            <div className="gm-form-row">
+              <div className="gm-form-group">
+                <label className="gm-form-label">Email *</label>
                 <input
                   type="email"
                   required
-                  placeholder="kamil@mezon.uz"
+                  placeholder="aziz@mezon.uz"
                   value={formData.email}
                   onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                  style={{ width: '100%', padding: '10px 12px', border: '1.5px solid #c8c8c8', fontSize: 14 }}
+                  className="gm-input"
                 />
               </div>
 
-              <div>
-                <label style={{ display: 'block', fontSize: 12, fontWeight: 800, textTransform: 'uppercase', marginBottom: 6 }}>
-                  Пароль *
-                </label>
+              <div className="gm-form-group">
+                <label className="gm-form-label">Пароль *</label>
                 <input
                   type="text"
                   required
-                  placeholder="Например, Mezon13!"
+                  placeholder="Не менее 8 символов"
                   value={formData.password}
                   onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                  style={{ width: '100%', padding: '10px 12px', border: '1.5px solid #c8c8c8', fontSize: 14 }}
+                  className="gm-input"
                 />
               </div>
             </div>
 
-            {/* Conditional fields based on role */}
             {(formData.role === 'STUDENT' || formData.role === 'MENTOR') && (
-              <div style={{ marginBottom: 20 }}>
-                <label style={{ display: 'block', fontSize: 12, fontWeight: 800, textTransform: 'uppercase', marginBottom: 6 }}>
-                  Класс (Параллель)
-                </label>
+              <div className="gm-form-group">
+                <label className="gm-form-label">Класс (Параллель)</label>
                 <select
                   value={formData.gradeLevel}
                   onChange={(e) => setFormData({ ...formData, gradeLevel: parseInt(e.target.value, 10) })}
-                  style={{ width: '100%', padding: '10px 12px', border: '1.5px solid #c8c8c8', fontSize: 14 }}
+                  className="gm-select"
                 >
                   <option value={9}>9 класс</option>
                   <option value={10}>10 класс</option>
@@ -960,15 +956,13 @@ export const AdminGodmodeView: React.FC<AdminGodmodeViewProps> = ({ onSwitchToUs
             )}
 
             {formData.role === 'PARENT' && (
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18, marginBottom: 20 }}>
-                <div>
-                  <label style={{ display: 'block', fontSize: 12, fontWeight: 800, textTransform: 'uppercase', marginBottom: 6 }}>
-                    Привязать к ученику:
-                  </label>
+              <div className="gm-form-row">
+                <div className="gm-form-group">
+                  <label className="gm-form-label">Привязать к ученику:</label>
                   <select
                     value={formData.studentId}
                     onChange={(e) => setFormData({ ...formData, studentId: e.target.value })}
-                    style={{ width: '100%', padding: '10px 12px', border: '1.5px solid #c8c8c8', fontSize: 14 }}
+                    className="gm-select"
                   >
                     <option value="">-- Выберите ученика --</option>
                     {studentsList.map((st) => (
@@ -979,14 +973,12 @@ export const AdminGodmodeView: React.FC<AdminGodmodeViewProps> = ({ onSwitchToUs
                   </select>
                 </div>
 
-                <div>
-                  <label style={{ display: 'block', fontSize: 12, fontWeight: 800, textTransform: 'uppercase', marginBottom: 6 }}>
-                    Уровень доступа:
-                  </label>
+                <div className="gm-form-group">
+                  <label className="gm-form-label">Уровень доступа:</label>
                   <select
                     value={formData.accessLevel}
                     onChange={(e) => setFormData({ ...formData, accessLevel: e.target.value })}
-                    style={{ width: '100%', padding: '10px 12px', border: '1.5px solid #c8c8c8', fontSize: 14 }}
+                    className="gm-select"
                   >
                     <option value="SUMMARY_ONLY">SUMMARY_ONLY (Только ретроспектива и проект)</option>
                     <option value="FULL_ACCESS">FULL_ACCESS (Полный просмотр сетки слотов)</option>
@@ -998,20 +990,7 @@ export const AdminGodmodeView: React.FC<AdminGodmodeViewProps> = ({ onSwitchToUs
             <button
               type="submit"
               disabled={isSubmitting}
-              style={{
-                background: '#00859e',
-                color: '#fff',
-                border: 'none',
-                padding: '14px 24px',
-                fontWeight: 800,
-                fontSize: 14,
-                textTransform: 'uppercase',
-                letterSpacing: '1px',
-                cursor: isSubmitting ? 'not-allowed' : 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-              }}
+              className="gm-btn-submit"
             >
               {isSubmitting ? (
                 <span>Создание пользователя и генерация спринта…</span>
@@ -1026,58 +1005,1208 @@ export const AdminGodmodeView: React.FC<AdminGodmodeViewProps> = ({ onSwitchToUs
         </div>
       )}
 
-      {/* TAB 4: SYSTEM & COMMERCIAL READINESS */}
-      {activeTab === 'system' && (
-        <div style={{ background: '#fff', border: '2px solid #222', padding: 32 }}>
-          <div style={{ fontSize: 12, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '1.5px', color: '#00859e', marginBottom: 8 }}>
-            Production Infrastructure Audit
-          </div>
-          <h2 style={{ fontSize: 22, fontWeight: 900, margin: '0 0 20px 0' }}>
-            Статус коммерческой готовности сервиса
-          </h2>
+      {/* TAB 4: TIMETABLE SCHEDULE TEMPLATE */}
+      {activeTab === 'timetable' && (
+        <div className="gm-box">
+          <div className="gm-tt-header">
+            <div>
+              <div className="gm-box-subtitle text-teal">Сетка учебного плана школы</div>
+              <h2 className="gm-box-title">Шаблон расписания по параллелям</h2>
+              <p className="gm-box-desc">
+                Эти уроки служат источником для генерации спринтов новых учеников.
+              </p>
+            </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 20 }}>
-            <div style={{ border: '1px solid #c8c8c8', padding: 20, background: '#f9f9f9' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#27ae60', fontWeight: 800, fontSize: 14 }}>
-                <CheckCircle2 size={18} />
+            <div className="gm-tt-controls">
+              <div className="gm-grade-pills">
+                {[9, 10, 11].map((g) => (
+                  <button
+                    key={g}
+                    type="button"
+                    onClick={() => setTimetableGrade(g)}
+                    className={`gm-grade-pill ${timetableGrade === g ? 'gm-grade-pill--active' : ''}`}
+                  >
+                    {g} класс
+                  </button>
+                ))}
+              </div>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setNewSlotForm({
+                    gradeLevel: timetableGrade,
+                    dayOfWeek: 1,
+                    startTime: '08:30',
+                    endTime: '09:15',
+                    title: '',
+                  });
+                  setShowAddSlotModal(true);
+                }}
+                className="gm-btn-add-slot"
+              >
+                <Plus size={14} />
+                <span>Добавить урок</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Timetable days breakdown */}
+          <div className="gm-tt-days">
+            {[1, 2, 3, 4, 5].map((d) => {
+              const daySlots = timetableSlots
+                .filter((s) => s.dayOfWeek === d)
+                .sort((a, b) => a.orderIndex - b.orderIndex || a.startTime.localeCompare(b.startTime));
+
+              return (
+                <div key={d} className="gm-tt-day">
+                  <div className="gm-tt-day-title">{DAY_NAMES[d]}</div>
+                  {daySlots.length === 0 ? (
+                    <div className="gm-tt-empty">Нет уроков</div>
+                  ) : (
+                    <div className="gm-tt-slot-list">
+                      {daySlots.map((s) => (
+                        <div key={s.id} className="gm-tt-slot">
+                          <div>
+                            <div className="gm-tt-time">
+                              {s.startTime} – {s.endTime}
+                            </div>
+                            <div className="gm-tt-name">{s.title}</div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteTimetableSlot(s.id)}
+                            className="gm-btn-slot-del"
+                            title="Удалить урок"
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* TAB 5: AUDIT LOG */}
+      {activeTab === 'audit' && (
+        <div className="gm-box">
+          <div className="gm-box-subtitle text-indigo">Безопасность и журнал операций</div>
+          <h2 className="gm-box-title">Аудит действий администраторов и пользователей</h2>
+          <p className="gm-box-desc">
+            Полный журнал ключевых событий: авторизации, создание пользователей, сброс паролей и подписание ревью.
+          </p>
+
+          <div className="gm-audit-list">
+            {auditLogs.length === 0 ? (
+              <div className="gm-td-empty">Журнал пока пуст</div>
+            ) : (
+              auditLogs.map((log) => (
+                <div key={log.id} className="gm-audit-entry">
+                  <div className="gm-audit-meta">
+                    <span className="gm-audit-action">{log.action}</span>
+                    <span className="gm-audit-time">
+                      {new Date(log.createdAt).toLocaleString('ru-RU', {
+                        day: 'numeric',
+                        month: 'short',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit',
+                      })}
+                    </span>
+                  </div>
+                  <div className="gm-audit-body">
+                    <strong>{log.actorName}</strong>: {log.details || log.action}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* TAB 6: SYSTEM READINESS */}
+      {activeTab === 'system' && (
+        <div className="gm-box">
+          <div className="gm-box-subtitle text-teal">Production Infrastructure Audit</div>
+          <h2 className="gm-box-title">Статус коммерческой готовности сервиса</h2>
+
+          <div className="gm-system-grid">
+            <div className="gm-sys-card">
+              <div className="gm-sys-status">
+                <CheckCircle2 size={18} color="#27ae60" />
                 <span>База данных PostgreSQL</span>
               </div>
-              <p style={{ fontSize: 13, color: '#5f5f5f', margin: '8px 0' }}>
-                Prisma ORM подключена, схема синхронизирована с User, Sprint, Week, Day, DaySlot, MediaAsset.
+              <p className="gm-sys-desc">
+                Prisma ORM подключена, схема синхронизирована с User, Sprint, Week, Day, DaySlot, MediaAsset, TimetableSlot, AuditLog.
               </p>
-              <div style={{ fontSize: 12, fontFamily: 'monospace', background: '#fff', padding: '6px 10px', border: '1px solid #e0e0e0' }}>
-                Status: CONNECTED &amp; OPERATIONAL
-              </div>
+              <div className="gm-sys-badge">Status: CONNECTED &amp; OPERATIONAL</div>
             </div>
 
-            <div style={{ border: '1px solid #c8c8c8', padding: 20, background: '#f9f9f9' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#27ae60', fontWeight: 800, fontSize: 14 }}>
-                <CheckCircle2 size={18} />
+            <div className="gm-sys-card">
+              <div className="gm-sys-status">
+                <CheckCircle2 size={18} color="#27ae60" />
                 <span>Аутентификация и GODMODE</span>
               </div>
-              <p style={{ fontSize: 13, color: '#5f5f5f', margin: '8px 0' }}>
-                Реализован криптографический scrypt-хэшинг паролей. Профиль somi наделен абсолютным GODMODE.
+              <p className="gm-sys-desc">
+                Криптографический scrypt-хэшинг с HMAC-подписанными сессиями (mezon_session) и защитой от перебора.
               </p>
-              <div style={{ fontSize: 12, fontFamily: 'monospace', background: '#fff', padding: '6px 10px', border: '1px solid #e0e0e0' }}>
-                Account: somi / Mezon13! (ADMIN)
-              </div>
+              <div className="gm-sys-badge">Founder Account: somi (ADMIN)</div>
             </div>
 
-            <div style={{ border: '1px solid #c8c8c8', padding: 20, background: '#f9f9f9' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#27ae60', fontWeight: 800, fontSize: 14 }}>
-                <CheckCircle2 size={18} />
-                <span>Автономная генерация спринтов</span>
+            <div className="gm-sys-card">
+              <div className="gm-sys-status">
+                <CheckCircle2 size={18} color="#27ae60" />
+                <span>Мобильная адаптивность</span>
               </div>
-              <p style={{ fontSize: 13, color: '#5f5f5f', margin: '8px 0' }}>
-                Каждый зарегистрированный ученик сразу получает расписание 10 недель со слотами и проектной субботой.
+              <p className="gm-sys-desc">
+                Терминал авторизации, панель управления Godmode и дневник полностью оптимизированы под мобильные экраны телефонов (320px–430px).
               </p>
-              <div style={{ fontSize: 12, fontFamily: 'monospace', background: '#fff', padding: '6px 10px', border: '1px solid #e0e0e0' }}>
-                Schedule: 10 WEEKS · 7 DAYS / WK
+              <div className="gm-sys-badge">Responsive: 100% MOBILE &amp; DESKTOP</div>
+            </div>
+
+            <div className="gm-sys-card">
+              <div className="gm-sys-status">
+                <CheckCircle2 size={18} color="#27ae60" />
+                <span>Сервер и Домен</span>
               </div>
+              <p className="gm-sys-desc">
+                Деплой в Coolify с автоматическим SSL-сертификатом на diary.mezon.uz. Docker multi-stage build standalone.
+              </p>
+              <div className="gm-sys-badge">Domain: https://diary.mezon.uz</div>
             </div>
           </div>
         </div>
       )}
+
+      {/* Password Reset Modal */}
+      {passwordModalUser && (
+        <div className="gm-modal-overlay">
+          <div className="gm-modal">
+            <div className="gm-modal-head">
+              <h3 className="gm-modal-title">Сброс пароля</h3>
+              <button
+                type="button"
+                onClick={() => setPasswordModalUser(null)}
+                className="gm-modal-close"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <form onSubmit={handleResetPassword}>
+              <p className="gm-modal-desc">
+                Установите новый пароль для <strong>{passwordModalUser.fullName}</strong> (@
+                {passwordModalUser.username}):
+              </p>
+
+              <div className="gm-form-group">
+                <input
+                  type="text"
+                  required
+                  placeholder="Новый пароль (от 8 символов)"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  className="gm-input"
+                  autoFocus
+                />
+              </div>
+
+              {passwordResetStatus && (
+                <div
+                  className={`gm-alert-${
+                    passwordResetStatus.includes('успешно') ? 'success' : 'danger'
+                  }`}
+                  style={{ marginBottom: 14 }}
+                >
+                  {passwordResetStatus}
+                </div>
+              )}
+
+              <div className="gm-modal-footer">
+                <button
+                  type="button"
+                  onClick={() => setPasswordModalUser(null)}
+                  className="gm-btn-cancel"
+                >
+                  Отмена
+                </button>
+                <button type="submit" className="gm-btn-save">
+                  Сохранить пароль
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Add Timetable Slot Modal */}
+      {showAddSlotModal && (
+        <div className="gm-modal-overlay">
+          <div className="gm-modal">
+            <div className="gm-modal-head">
+              <h3 className="gm-modal-title">Добавить урок в расписание ({newSlotForm.gradeLevel} класс)</h3>
+              <button
+                type="button"
+                onClick={() => setShowAddSlotModal(false)}
+                className="gm-modal-close"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <form onSubmit={handleAddTimetableSlot}>
+              <div className="gm-form-group">
+                <label className="gm-form-label">День недели</label>
+                <select
+                  value={newSlotForm.dayOfWeek}
+                  onChange={(e) =>
+                    setNewSlotForm({ ...newSlotForm, dayOfWeek: parseInt(e.target.value, 10) })
+                  }
+                  className="gm-select"
+                >
+                  {[1, 2, 3, 4, 5].map((d) => (
+                    <option key={d} value={d}>
+                      {DAY_NAMES[d]}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="gm-form-row">
+                <div className="gm-form-group">
+                  <label className="gm-form-label">Начало (ЧЧ:ММ)</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="08:30"
+                    value={newSlotForm.startTime}
+                    onChange={(e) => setNewSlotForm({ ...newSlotForm, startTime: e.target.value })}
+                    className="gm-input"
+                  />
+                </div>
+                <div className="gm-form-group">
+                  <label className="gm-form-label">Конец (ЧЧ:ММ)</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="09:15"
+                    value={newSlotForm.endTime}
+                    onChange={(e) => setNewSlotForm({ ...newSlotForm, endTime: e.target.value })}
+                    className="gm-input"
+                  />
+                </div>
+              </div>
+
+              <div className="gm-form-group">
+                <label className="gm-form-label">Название предмета *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Алгебра и мат. анализ"
+                  value={newSlotForm.title}
+                  onChange={(e) => setNewSlotForm({ ...newSlotForm, title: e.target.value })}
+                  className="gm-input"
+                />
+              </div>
+
+              <div className="gm-modal-footer">
+                <button
+                  type="button"
+                  onClick={() => setShowAddSlotModal(false)}
+                  className="gm-btn-cancel"
+                >
+                  Отмена
+                </button>
+                <button type="submit" className="gm-btn-save">
+                  Добавить в сетку
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Styled JSX for Responsive Design */}
+      <style jsx>{`
+        .gm-root {
+          padding: 24px 28px;
+          max-width: 1400px;
+          margin: 0 auto;
+          color: #121212;
+          box-sizing: border-box;
+          width: 100%;
+        }
+        .gm-banner {
+          background: #121212;
+          color: #ffffff;
+          padding: 24px 28px;
+          border-left: 6px solid #a04a84;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          flex-wrap: wrap;
+          gap: 16px;
+          box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+          margin-bottom: 24px;
+        }
+        .gm-badge-row {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          margin-bottom: 6px;
+          flex-wrap: wrap;
+        }
+        .gm-badge-godmode {
+          background: #a04a84;
+          color: #ffffff;
+          font-size: 11px;
+          font-weight: 800;
+          padding: 2px 8px;
+          letter-spacing: 1.5px;
+          text-transform: uppercase;
+        }
+        .gm-badge-user {
+          color: #fcd5a6;
+          font-size: 13px;
+          font-weight: 700;
+        }
+        .gm-title {
+          font-size: 26px;
+          font-weight: 800;
+          margin: 0;
+          letter-spacing: -0.5px;
+        }
+        .gm-title-hl {
+          background: #00859e;
+          padding: 0 8px;
+          color: #ffffff;
+        }
+        .gm-desc {
+          color: rgba(255, 255, 255, 0.7);
+          font-size: 13px;
+          margin: 6px 0 0 0;
+        }
+        .gm-banner__actions {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          flex-wrap: wrap;
+        }
+        .gm-btn-register {
+          background: #fcd5a6;
+          color: #121212;
+          border: none;
+          padding: 10px 18px;
+          font-weight: 800;
+          font-size: 13px;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+        }
+        .gm-btn-refresh {
+          background: rgba(255, 255, 255, 0.1);
+          color: #ffffff;
+          border: 1px solid rgba(255, 255, 255, 0.2);
+          padding: 10px 14px;
+          font-weight: 700;
+          font-size: 13px;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          gap: 6px;
+        }
+
+        .gm-tabs-scroll {
+          overflow-x: auto;
+          -webkit-overflow-scrolling: touch;
+          margin-bottom: 24px;
+          border-bottom: 2px solid #e0e0e0;
+        }
+        .gm-tabs {
+          display: flex;
+          gap: 6px;
+          white-space: nowrap;
+          min-width: max-content;
+        }
+        .gm-tab {
+          padding: 12px 18px;
+          background: none;
+          border: none;
+          border-bottom: 3px solid transparent;
+          color: #5f5f5f;
+          font-weight: 800;
+          font-size: 13px;
+          cursor: pointer;
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+          transition: color 0.15s, border-color 0.15s;
+        }
+        .gm-tab--active {
+          color: #00859e;
+          border-bottom-color: #00859e;
+        }
+
+        .gm-metrics-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+          gap: 16px;
+          margin-bottom: 24px;
+        }
+        .gm-card-metric {
+          background: #f8f8f8;
+          border: 1.5px solid #dcdcdc;
+          padding: 18px 20px;
+        }
+        .gm-card-metric__label {
+          color: #5f5f5f;
+          font-size: 11px;
+          font-weight: 800;
+          text-transform: uppercase;
+          letter-spacing: 1px;
+        }
+        .gm-card-metric__value {
+          font-size: 32px;
+          font-weight: 900;
+          color: #121212;
+          margin-top: 4px;
+        }
+        .gm-card-metric__sub {
+          font-size: 12px;
+          color: #5f5f5f;
+          margin-top: 4px;
+          font-weight: 600;
+        }
+
+        .gm-split-grid {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 20px;
+          margin-bottom: 24px;
+        }
+        .gm-box {
+          background: #ffffff;
+          border: 2px solid #222222;
+          padding: 24px;
+          box-sizing: border-box;
+        }
+        .gm-box--danger {
+          border-color: #c0392b;
+        }
+        .gm-box--narrow {
+          max-width: 760px;
+        }
+        .gm-box-subtitle {
+          font-size: 11px;
+          font-weight: 800;
+          text-transform: uppercase;
+          letter-spacing: 1.5px;
+          margin-bottom: 8px;
+        }
+        .gm-box-title {
+          font-size: 18px;
+          font-weight: 800;
+          margin: 0 0 12px 0;
+          letter-spacing: -0.3px;
+        }
+        .gm-box-desc {
+          color: #5f5f5f;
+          font-size: 13px;
+          margin: 0 0 20px 0;
+          line-height: 1.5;
+        }
+
+        .gm-cohorts-bars {
+          display: flex;
+          flex-direction: column;
+          gap: 14px;
+        }
+        .gm-bar-header {
+          display: flex;
+          justify-content: space-between;
+          font-size: 13px;
+          font-weight: 700;
+          margin-bottom: 4px;
+        }
+        .gm-bar-track {
+          height: 10px;
+          background: #e8e8e8;
+          overflow: hidden;
+        }
+        .gm-bar-fill {
+          height: 100%;
+        }
+        .gm-hint-note {
+          margin-top: 20px;
+          padding-top: 14px;
+          border-top: 1px solid #e0e0e0;
+          font-size: 12px;
+          color: #666;
+          line-height: 1.4;
+        }
+
+        .gm-danger-title {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          color: #c0392b;
+          font-size: 11px;
+          font-weight: 800;
+          text-transform: uppercase;
+          letter-spacing: 1.5px;
+          margin-bottom: 8px;
+        }
+        .gm-empty-check {
+          padding: 24px;
+          text-align: center;
+          color: #00859e;
+          font-weight: 700;
+          font-size: 14px;
+        }
+        .gm-risk-list {
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+        }
+        .gm-risk-item {
+          background: #fff8f7;
+          border: 1px solid #fab1a0;
+          padding: 12px 14px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          flex-wrap: wrap;
+        }
+        .gm-risk-name {
+          font-weight: 800;
+          font-size: 14px;
+        }
+        .gm-risk-grade {
+          font-size: 12px;
+          color: #666;
+          font-weight: 400;
+        }
+        .gm-flags-row {
+          display: flex;
+          gap: 6px;
+          flex-wrap: wrap;
+          margin-top: 4px;
+        }
+        .gm-flag-tag {
+          background: #c0392b;
+          color: #ffffff;
+          font-size: 10px;
+          font-weight: 700;
+          padding: 1px 6px;
+          text-transform: uppercase;
+        }
+        .gm-btn-inspect {
+          background: #121212;
+          color: #ffffff;
+          border: none;
+          padding: 6px 12px;
+          font-size: 12px;
+          font-weight: 700;
+          cursor: pointer;
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+        }
+
+        .gm-filter-bar {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          flex-wrap: wrap;
+          gap: 14px;
+          margin-bottom: 20px;
+        }
+        .gm-search-input-wrap {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          flex: 1;
+          min-width: 240px;
+        }
+        .gm-search-input {
+          flex: 1;
+          padding: 9px 12px;
+          border: 1.5px solid #c8c8c8;
+          font-size: 14px;
+          outline: none;
+        }
+        .gm-role-pills {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          overflow-x: auto;
+          max-width: 100%;
+        }
+        .gm-role-pill {
+          background: #f0f0f0;
+          color: #222222;
+          border: none;
+          padding: 6px 12px;
+          font-size: 12px;
+          font-weight: 700;
+          cursor: pointer;
+          white-space: nowrap;
+        }
+        .gm-role-pill--active {
+          background: #00859e;
+          color: #ffffff;
+        }
+
+        .gm-table-container {
+          overflow-x: auto;
+          display: block;
+        }
+        .gm-table {
+          width: 100%;
+          border-collapse: collapse;
+          text-align: left;
+        }
+        .gm-table th {
+          background: #121212;
+          color: #ffffff;
+          font-size: 11px;
+          text-transform: uppercase;
+          letter-spacing: 1px;
+          padding: 12px 14px;
+        }
+        .gm-table td {
+          padding: 12px 14px;
+          border-bottom: 1px solid #e8e8e8;
+          font-size: 13px;
+        }
+        .gm-tr:hover {
+          background: #fafafa;
+        }
+        .gm-td-empty {
+          padding: 32px;
+          text-align: center;
+          color: #5f5f5f;
+          font-size: 13px;
+        }
+        .gm-td-user {
+          font-weight: 700;
+        }
+        .gm-user-name {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+        }
+        .gm-username {
+          font-family: monospace;
+          font-weight: 600;
+        }
+        .gm-email {
+          font-size: 11px;
+          color: #666;
+        }
+        .gm-td-grade {
+          font-weight: 600;
+        }
+        .gm-muted {
+          font-size: 12px;
+          color: #666;
+        }
+
+        .gm-role-tag {
+          font-size: 10px;
+          font-weight: 800;
+          padding: 3px 7px;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+          display: inline-block;
+        }
+        .gm-role-tag--admin {
+          background: #a04a84;
+          color: #ffffff;
+        }
+        .gm-role-tag--mentor {
+          background: #00859e;
+          color: #ffffff;
+        }
+        .gm-role-tag--parent {
+          background: #6b70a3;
+          color: #ffffff;
+        }
+        .gm-role-tag--student {
+          background: #fcd5a6;
+          color: #121212;
+        }
+
+        .gm-actions-row {
+          display: flex;
+          align-items: center;
+          justify-content: flex-end;
+          gap: 6px;
+        }
+        .gm-btn-act {
+          border: none;
+          padding: 6px 10px;
+          font-size: 11px;
+          font-weight: 700;
+          cursor: pointer;
+          display: inline-flex;
+          align-items: center;
+          gap: 4px;
+        }
+        .gm-btn-act--enter {
+          background: #121212;
+          color: #ffffff;
+        }
+        .gm-btn-act--pwd {
+          background: #f0f0f0;
+          color: #333333;
+          border: 1px solid #d0d0d0;
+        }
+        .gm-btn-act--del {
+          background: #fdeeed;
+          color: #c0392b;
+          border: 1px solid #f9d5d3;
+        }
+
+        .gm-cards-mobile {
+          display: none;
+        }
+        .gm-user-card {
+          background: #ffffff;
+          border: 1.5px solid #dcdcdc;
+          padding: 14px;
+          margin-bottom: 10px;
+        }
+        .gm-user-card__head {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+          gap: 8px;
+        }
+        .gm-user-card__name {
+          font-weight: 800;
+          font-size: 14px;
+          display: flex;
+          align-items: center;
+          gap: 6px;
+        }
+        .gm-user-card__login {
+          font-size: 12px;
+          color: #666;
+          margin-top: 2px;
+        }
+        .gm-user-card__meta {
+          margin-top: 8px;
+          font-size: 12px;
+          display: flex;
+          gap: 12px;
+          flex-wrap: wrap;
+        }
+        .gm-user-card__footer {
+          margin-top: 12px;
+          padding-top: 10px;
+          border-top: 1px solid #eee;
+          display: flex;
+          gap: 8px;
+          flex-wrap: wrap;
+        }
+
+        .gm-form-row {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 16px;
+          margin-bottom: 16px;
+        }
+        .gm-form-group {
+          margin-bottom: 16px;
+        }
+        .gm-form-label {
+          display: block;
+          font-size: 11px;
+          font-weight: 800;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+          margin-bottom: 6px;
+        }
+        .gm-input,
+        .gm-select {
+          width: 100%;
+          padding: 10px 12px;
+          border: 1.5px solid #c8c8c8;
+          font-size: 14px;
+          outline: none;
+          box-sizing: border-box;
+          background: #ffffff;
+        }
+        .gm-input:focus,
+        .gm-select:focus {
+          border-color: #00859e;
+        }
+        .gm-role-grid {
+          display: grid;
+          grid-template-columns: repeat(4, 1fr);
+          gap: 8px;
+        }
+        .gm-role-choice {
+          padding: 10px 8px;
+          background: #f0f0f0;
+          color: #222222;
+          border: 2px solid transparent;
+          font-weight: 800;
+          font-size: 12px;
+          cursor: pointer;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 6px;
+        }
+        .gm-role-choice--active {
+          background: #121212;
+          color: #ffffff;
+          border-color: #a04a84;
+        }
+        .gm-btn-submit {
+          background: #00859e;
+          color: #ffffff;
+          border: none;
+          padding: 14px 24px;
+          font-weight: 800;
+          font-size: 13px;
+          text-transform: uppercase;
+          letter-spacing: 1px;
+          cursor: pointer;
+          display: inline-flex;
+          align-items: center;
+          gap: 8px;
+        }
+        .gm-alert-success {
+          background: #e8f8f5;
+          border: 1px solid #2ecc71;
+          color: #27ae60;
+          padding: 12px 14px;
+          font-weight: 600;
+          font-size: 13px;
+          margin-bottom: 16px;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+        .gm-alert-danger {
+          background: #fdeeed;
+          border: 1px solid #e74c3c;
+          color: #c0392b;
+          padding: 12px 14px;
+          font-weight: 600;
+          font-size: 13px;
+          margin-bottom: 16px;
+        }
+
+        .gm-tt-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-start;
+          flex-wrap: wrap;
+          gap: 16px;
+          margin-bottom: 20px;
+        }
+        .gm-tt-controls {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          flex-wrap: wrap;
+        }
+        .gm-grade-pills {
+          display: flex;
+          gap: 6px;
+        }
+        .gm-grade-pill {
+          background: #f0f0f0;
+          color: #222222;
+          border: none;
+          padding: 8px 14px;
+          font-size: 12px;
+          font-weight: 700;
+          cursor: pointer;
+        }
+        .gm-grade-pill--active {
+          background: #00859e;
+          color: #ffffff;
+        }
+        .gm-btn-add-slot {
+          background: #121212;
+          color: #ffffff;
+          border: none;
+          padding: 8px 14px;
+          font-size: 12px;
+          font-weight: 700;
+          cursor: pointer;
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+        }
+        .gm-tt-days {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+          gap: 16px;
+        }
+        .gm-tt-day {
+          background: #f9f9f9;
+          border: 1.5px solid #dcdcdc;
+          padding: 14px;
+        }
+        .gm-tt-day-title {
+          font-weight: 800;
+          font-size: 13px;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+          margin-bottom: 10px;
+          padding-bottom: 6px;
+          border-bottom: 2px solid #222222;
+        }
+        .gm-tt-empty {
+          color: #888;
+          font-size: 12px;
+          padding: 12px 0;
+          text-align: center;
+        }
+        .gm-tt-slot-list {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+        }
+        .gm-tt-slot {
+          background: #ffffff;
+          border: 1px solid #d8d8d8;
+          padding: 8px 10px;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 6px;
+        }
+        .gm-tt-time {
+          font-family: monospace;
+          font-size: 11px;
+          color: #00859e;
+          font-weight: 700;
+        }
+        .gm-tt-name {
+          font-size: 13px;
+          font-weight: 700;
+          margin-top: 2px;
+        }
+        .gm-btn-slot-del {
+          background: none;
+          border: none;
+          color: #999;
+          cursor: pointer;
+          padding: 4px;
+        }
+        .gm-btn-slot-del:hover {
+          color: #c0392b;
+        }
+
+        .gm-audit-list {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+          max-height: 520px;
+          overflow-y: auto;
+        }
+        .gm-audit-entry {
+          background: #f9f9f9;
+          border-left: 3px solid #6b70a3;
+          padding: 10px 14px;
+          font-size: 13px;
+        }
+        .gm-audit-meta {
+          display: flex;
+          justify-content: space-between;
+          margin-bottom: 4px;
+          font-size: 11px;
+        }
+        .gm-audit-action {
+          font-weight: 800;
+          color: #6b70a3;
+          text-transform: uppercase;
+        }
+        .gm-audit-time {
+          color: #888;
+        }
+        .gm-audit-body {
+          color: #222;
+        }
+
+        .gm-system-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+          gap: 16px;
+        }
+        .gm-sys-card {
+          border: 1px solid #c8c8c8;
+          padding: 18px;
+          background: #f9f9f9;
+        }
+        .gm-sys-status {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          color: #27ae60;
+          font-weight: 800;
+          font-size: 14px;
+        }
+        .gm-sys-desc {
+          font-size: 13px;
+          color: #5f5f5f;
+          margin: 8px 0;
+          line-height: 1.4;
+        }
+        .gm-sys-badge {
+          font-size: 11px;
+          font-family: monospace;
+          background: #ffffff;
+          padding: 6px 8px;
+          border: 1px solid #e0e0e0;
+          color: #222;
+        }
+
+        .gm-modal-overlay {
+          position: fixed;
+          top: 0;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          background: rgba(0, 0, 0, 0.6);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          z-index: 999;
+          padding: 16px;
+        }
+        .gm-modal {
+          background: #ffffff;
+          border: 2px solid #222222;
+          padding: 24px;
+          width: 100%;
+          maxWidth: 460px;
+          box-shadow: 0 16px 36px rgba(0, 0, 0, 0.3);
+        }
+        .gm-modal-head {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 16px;
+        }
+        .gm-modal-title {
+          font-size: 17px;
+          font-weight: 800;
+          margin: 0;
+        }
+        .gm-modal-close {
+          background: none;
+          border: none;
+          cursor: pointer;
+          color: #666;
+        }
+        .gm-modal-desc {
+          font-size: 13px;
+          color: #555;
+          margin: 0 0 16px 0;
+        }
+        .gm-modal-footer {
+          display: flex;
+          justify-content: flex-end;
+          gap: 10px;
+          margin-top: 18px;
+        }
+        .gm-btn-cancel {
+          background: #f0f0f0;
+          color: #333;
+          border: none;
+          padding: 10px 16px;
+          font-weight: 700;
+          font-size: 13px;
+          cursor: pointer;
+        }
+        .gm-btn-save {
+          background: #00859e;
+          color: #fff;
+          border: none;
+          padding: 10px 18px;
+          font-weight: 800;
+          font-size: 13px;
+          cursor: pointer;
+        }
+
+        .text-teal {
+          color: #00859e;
+        }
+        .text-magenta {
+          color: #a04a84;
+        }
+        .text-indigo {
+          color: #6b70a3;
+        }
+        .text-red {
+          color: #c0392b;
+        }
+        .bg-teal {
+          background-color: #00859e;
+        }
+        .bg-magenta {
+          background-color: #a04a84;
+        }
+        .bg-indigo {
+          background-color: #6b70a3;
+        }
+        .font-semibold {
+          font-weight: 600;
+        }
+        .font-bold {
+          font-weight: 700;
+        }
+
+        /* Mobile specific media query */
+        @media (max-width: 768px) {
+          .gm-root {
+            padding: 16px 12px;
+          }
+          .gm-banner {
+            padding: 18px 16px;
+          }
+          .gm-banner__actions {
+            width: 100%;
+          }
+          .gm-btn-register,
+          .gm-btn-refresh {
+            flex: 1;
+            justify-content: center;
+          }
+          .gm-split-grid {
+            grid-template-columns: 1fr;
+          }
+          .gm-form-row {
+            grid-template-columns: 1fr;
+          }
+          .gm-role-grid {
+            grid-template-columns: repeat(2, 1fr);
+          }
+          .gm-table-container {
+            display: none;
+          }
+          .gm-cards-mobile {
+            display: block;
+          }
+        }
+      `}</style>
     </div>
   );
 };

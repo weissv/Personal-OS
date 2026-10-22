@@ -9,8 +9,13 @@ export async function GET(
 ) {
   try {
     const { path: pathSegments } = await params;
-    const fullRelativePath = pathSegments.join('/');
-    const filePath = path.join(UPLOAD_DIR, fullRelativePath);
+    const fullRelativePath = path.normalize(pathSegments.join('/')).replace(/^(\.\.[\/\\])+/, '');
+    const resolvedUploadDir = path.resolve(UPLOAD_DIR);
+    const filePath = path.resolve(resolvedUploadDir, fullRelativePath);
+
+    if (!filePath.startsWith(resolvedUploadDir)) {
+      return NextResponse.json({ error: 'Access denied' }, { status: 403 });
+    }
 
     if (!fs.existsSync(filePath)) {
       return NextResponse.json({ error: 'File not found' }, { status: 404 });

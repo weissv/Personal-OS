@@ -1,41 +1,16 @@
 import { NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
-import prisma from '@/lib/prisma';
-import { getCurrentUser, getAllDemoUsers, sanitizeUser, isUserGodmode } from '@/lib/auth';
+import { getSessionContext, isUserGodmode } from '@/lib/auth';
+
 
 export async function GET() {
-  const currentUser = await getCurrentUser();
-
-  if (!currentUser) {
-    return NextResponse.json({
-      user: null,
-      isGodmode: false,
-      isImpersonating: false,
-      availableUsers: [],
-    });
+  const ctx = await getSessionContext();
+  if (!ctx) {
+    return NextResponse.json({ user: null, isGodmode: false, isImpersonating: false }, { status: 401 });
   }
-
-  const cookieStore = await cookies();
-  const realAdminId = cookieStore.get('mezon_godmode_real_id')?.value;
-  let isImpersonating = false;
-  let realAdminUser = null;
-
-  if (realAdminId && realAdminId !== currentUser.id) {
-    const adminRecord = await prisma.user.findUnique({ where: { id: realAdminId } });
-    if (adminRecord && isUserGodmode(adminRecord)) {
-      isImpersonating = true;
-      realAdminUser = sanitizeUser(adminRecord);
-    }
-  }
-
-  const isGodmode = isUserGodmode(currentUser) || !!realAdminUser;
-  const allUsers = isGodmode ? await getAllDemoUsers() : [];
-
   return NextResponse.json({
-    user: currentUser,
-    isGodmode,
-    isImpersonating,
-    realAdmin: realAdminUser,
-    availableUsers: allUsers,
+    user: ctx.user,
+    isGodmode: isUserGodmode(ctx.user) || !!ctx.realAdmin,
+    isImpersonating: ctx.isImpersonating,
+    realAdmin: ctx.realAdmin ? { id: ctx.realAdmin.id, fullName: ctx.realAdmin.fullName } : null,
   });
 }

@@ -1,10 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { generatePresignedUploadUrl } from '@/lib/storage';
+import { authenticate, canAccessStudent, denyResponse, notFoundResponse, studentIdForWeek } from '@/lib/auth';
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
+    const auth = await authenticate();
+    if (!auth.ok) return auth.response;
+
+    const body = await req.json().catch(() => ({}));
     const { weekId, fileName, fileType, fileSize, note } = body;
 
     if (!weekId || !fileName || !fileType) {
@@ -14,12 +18,19 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const studentId = await studentIdForWeek(weekId);
+    if (!studentId) return notFoundResponse('Неделя не найдена');
+
+    if (!(await canAccessStudent(auth.ctx, studentId, 'write'))) {
+      return denyResponse();
+    }
+
     const week = await prisma.week.findUnique({
       where: { id: weekId },
     });
 
     if (!week) {
-      return NextResponse.json({ error: 'Week not found' }, { status: 404 });
+      return notFoundResponse('Неделя не найдена');
     }
 
     const { uploadUrl, publicUrl } = await generatePresignedUploadUrl({
@@ -37,7 +48,7 @@ export async function POST(req: NextRequest) {
         fileType,
         fileSize: fileSize || 0,
         fileUrl: publicUrl,
-        note: note || null,
+        note: note ? String(note).slice(0, 500) : null,
       },
     });
 

@@ -1,60 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
-import { getCurrentUser, isUserGodmode, sanitizeUser } from '@/lib/auth';
+import { authenticate, sanitizeUser } from '@/lib/auth';
 import { hashPassword } from '@/lib/password';
-import { Role, SlotType, SlotStatus, ParentAccessLevel } from '@prisma/client';
+import { Role, ParentAccessLevel } from '@prisma/client';
+import { cleanEmail, cleanGrade, cleanName, cleanPassword, cleanUsername, PASSWORD_HINT, USERNAME_HINT } from '@/lib/validation';
+import { generateSprintForStudent, todayUTC, mondayOnOrBefore } from '@/lib/sprint';
+import { audit } from '@/lib/audit';
 
-const TIMETABLE_TEMPLATES: Record<number, Array<{ startTime: string; endTime: string; title: string }>> = {
-  1: [
-    { startTime: '08:30', endTime: '09:15', title: 'Алгебра и мат. анализ' },
-    { startTime: '09:25', endTime: '10:10', title: 'Физика (Оптика)' },
-    { startTime: '10:25', endTime: '11:10', title: 'Английский язык (Academic Writing)' },
-    { startTime: '11:30', endTime: '12:15', title: 'Узбекский язык и литература' },
-    { startTime: '12:25', endTime: '13:10', title: 'История' },
-    { startTime: '14:00', endTime: '14:45', title: 'Информатика и алгоритмы' },
-    { startTime: '15:00', endTime: '16:00', title: 'Проектная лаборатория Mezon' },
-  ],
-  2: [
-    { startTime: '08:30', endTime: '09:15', title: 'Геометрия' },
-    { startTime: '09:25', endTime: '10:10', title: 'Химия (Лабораторный практикум)' },
-    { startTime: '10:25', endTime: '11:10', title: 'Английский язык (Debate Club)' },
-    { startTime: '11:30', endTime: '12:15', title: 'Биология' },
-    { startTime: '12:25', endTime: '13:10', title: 'Литература' },
-    { startTime: '14:00', endTime: '15:30', title: 'Спорт / Баскетбол' },
-  ],
-  3: [
-    { startTime: '08:30', endTime: '09:15', title: 'Алгебра' },
-    { startTime: '09:25', endTime: '10:10', title: 'Физика' },
-    { startTime: '10:25', endTime: '11:10', title: 'Всемирная история' },
-    { startTime: '11:30', endTime: '12:15', title: 'Английский язык' },
-    { startTime: '12:25', endTime: '13:10', title: 'География' },
-    { startTime: '14:00', endTime: '15:00', title: 'Наставнический час с куратором' },
-  ],
-  4: [
-    { startTime: '08:30', endTime: '09:15', title: 'Геометрия' },
-    { startTime: '09:25', endTime: '10:10', title: 'Химия' },
-    { startTime: '10:25', endTime: '11:10', title: 'Информатика' },
-    { startTime: '11:30', endTime: '12:15', title: 'Русский язык и риторика' },
-    { startTime: '12:25', endTime: '13:10', title: 'Биология' },
-    { startTime: '14:00', endTime: '15:30', title: 'Исследовательская работа' },
-  ],
-  5: [
-    { startTime: '08:30', endTime: '09:15', title: 'Алгебра' },
-    { startTime: '09:25', endTime: '10:10', title: 'Физика' },
-    { startTime: '10:25', endTime: '11:10', title: 'Английский язык' },
-    { startTime: '11:30', endTime: '12:15', title: 'Литература' },
-    { startTime: '12:25', endTime: '13:10', title: 'Искусство и дизайн' },
-    { startTime: '14:00', endTime: '15:00', title: 'Сборка итогов недели' },
-  ],
-};
 
 // GET /api/v1/admin/users
 export async function GET(req: NextRequest) {
   try {
-    const user = await getCurrentUser();
-    if (!user || !isUserGodmode(user)) {
-      return NextResponse.json({ error: 'Access denied: Godmode/Admin required' }, { status: 403 });
-    }
+    const auth = await authenticate({ admin: true });
+    if (!auth.ok) return auth.response;
 
     const { searchParams } = new URL(req.url);
     const roleFilter = searchParams.get('role');
@@ -64,11 +22,12 @@ export async function GET(req: NextRequest) {
     if (roleFilter && ['STUDENT', 'MENTOR', 'PARENT', 'ADMIN'].includes(roleFilter)) {
       where.role = roleFilter;
     }
-    if (search) {
+    if (search && search.trim()) {
+      const q = search.trim();
       where.OR = [
-        { fullName: { contains: search, mode: 'insensitive' } },
-        { username: { contains: search, mode: 'insensitive' } },
-        { email: { contains: search, mode: 'insensitive' } },
+        { fullName: { contains: q, mode: 'insensitive' } },
+        { username: { contains: q, mode: 'insensitive' } },
+        { email: { contains: q, mode: 'insensitive' } },
       ];
     }
 
@@ -119,37 +78,40 @@ export async function GET(req: NextRequest) {
 // POST /api/v1/admin/users
 export async function POST(req: NextRequest) {
   try {
-    const admin = await getCurrentUser();
-    if (!admin || !isUserGodmode(admin)) {
-      return NextResponse.json({ error: 'Access denied: Godmode/Admin required' }, { status: 403 });
+    const auth = await authenticate({ admin: true });
+    if (!auth.ok) return auth.response;
+    const admin = auth.ctx.user;
+
+    const body = await req.json().catch(() => ({}));
+    const rawFullName = cleanName(body.fullName);
+    const rawUsername = cleanUsername(body.username);
+    const rawEmail = cleanEmail(body.email);
+    const rawPassword = cleanPassword(body.password);
+    const roleInput = String(body.role || 'STUDENT').toUpperCase();
+    const gradeLevel = cleanGrade(body.gradeLevel) || (roleInput === 'STUDENT' ? 9 : null);
+    const studentId = body.studentId ? String(body.studentId).trim() : null;
+    const accessLevelInput = String(body.accessLevel || 'SUMMARY_ONLY');
+
+    if (!rawFullName) {
+      return NextResponse.json({ error: 'Укажите корректное ФИО (от 2 до 100 символов)' }, { status: 400 });
     }
-
-    const body = await req.json();
-    const {
-      fullName,
-      username,
-      email,
-      password,
-      role = 'STUDENT',
-      gradeLevel = 9,
-      studentId, // For PARENT role: link to student
-      accessLevel = 'SUMMARY_ONLY',
-    } = body;
-
-    if (!fullName || !username || !email || !password) {
-      return NextResponse.json(
-        { error: 'Заполните все обязательные поля: ФИО, логин, email, пароль' },
-        { status: 400 }
-      );
+    if (!rawUsername) {
+      return NextResponse.json({ error: USERNAME_HINT }, { status: 400 });
     }
-
-    const cleanUsername = username.trim().toLowerCase();
-    const cleanEmail = email.trim().toLowerCase();
+    if (!rawEmail) {
+      return NextResponse.json({ error: 'Укажите корректный адрес электронной почты' }, { status: 400 });
+    }
+    if (!rawPassword) {
+      return NextResponse.json({ error: PASSWORD_HINT }, { status: 400 });
+    }
+    if (!['STUDENT', 'MENTOR', 'PARENT', 'ADMIN'].includes(roleInput)) {
+      return NextResponse.json({ error: 'Недопустимая роль пользователя' }, { status: 400 });
+    }
 
     // Check unique username & email
     const existing = await prisma.user.findFirst({
       where: {
-        OR: [{ username: cleanUsername }, { email: cleanEmail }],
+        OR: [{ username: rawUsername }, { email: rawEmail }],
       },
     });
 
@@ -160,125 +122,57 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const passwordHash = hashPassword(password);
-    const parsedGrade = gradeLevel ? parseInt(gradeLevel, 10) : 9;
+    const passwordHash = hashPassword(rawPassword);
 
     const newUser = await prisma.user.create({
       data: {
-        fullName: fullName.trim(),
-        username: cleanUsername,
-        email: cleanEmail,
+        fullName: rawFullName,
+        username: rawUsername,
+        email: rawEmail,
         passwordHash,
-        role: role as Role,
-        gradeLevel: role === 'STUDENT' || role === 'MENTOR' ? parsedGrade : null,
+        role: roleInput as Role,
+        gradeLevel: roleInput === 'STUDENT' || roleInput === 'MENTOR' ? gradeLevel : null,
       },
     });
 
     // If role is PARENT and studentId is provided, link to student
-    if (role === 'PARENT' && studentId) {
-      await prisma.parentStudentLink.create({
-        data: {
-          studentId,
-          parentId: newUser.id,
-          accessLevel: (accessLevel as ParentAccessLevel) || ParentAccessLevel.SUMMARY_ONLY,
-        },
-      });
-    }
-
-    // If role is STUDENT, automatically generate their Sprint, 10 Weeks, Days and Timetable Slots
-    if (role === 'STUDENT') {
-      const sprintStartDate = new Date(2026, 8, 1); // Sept 1, 2026
-      const sprintEndDate = new Date(2026, 10, 8); // Nov 8, 2026
-
-      const sprint = await prisma.sprint.create({
-        data: {
-          studentId: newUser.id,
-          title: `1 четверть 2026-2027 (${parsedGrade} класс)`,
-          startDate: sprintStartDate,
-          endDate: sprintEndDate,
-          weeksTotal: 10,
-        },
-      });
-
-      // Generate 10 weeks
-      for (let w = 1; w <= 10; w++) {
-        const weekStart = new Date(2026, 8, 1 + (w - 1) * 7);
-        const weekEnd = new Date(2026, 8, 7 + (w - 1) * 7);
-
-        const week = await prisma.week.create({
+    if (roleInput === 'PARENT' && studentId) {
+      const student = await prisma.user.findUnique({ where: { id: studentId } });
+      if (student && student.role === Role.STUDENT) {
+        await prisma.parentStudentLink.create({
           data: {
-            sprintId: sprint.id,
-            weekNumber: w,
-            startDate: weekStart,
-            endDate: weekEnd,
-            weekGoal: w === 1 ? 'Адаптация и запуск траектории' : `Освоение программы недели ${w}`,
+            studentId,
+            parentId: newUser.id,
+            accessLevel: accessLevelInput === 'FULL_ACCESS' ? ParentAccessLevel.FULL_ACCESS : ParentAccessLevel.SUMMARY_ONLY,
           },
         });
-
-        // 7 days per week
-        for (let d = 1; d <= 7; d++) {
-          const dayDate = new Date(weekStart);
-          dayDate.setDate(dayDate.getDate() + (d - 1));
-
-          const isSelfStudy = d === 6;
-
-          const day = await prisma.day.create({
-            data: {
-              weekId: week.id,
-              date: dayDate,
-              dayOfWeek: d,
-              isSelfStudy,
-            },
-          });
-
-          // Monday-Friday: Academic slots
-          if (d >= 1 && d <= 5) {
-            const lessons = TIMETABLE_TEMPLATES[d] || [];
-            for (let i = 0; i < lessons.length; i++) {
-              const l = lessons[i];
-              await prisma.daySlot.create({
-                data: {
-                  dayId: day.id,
-                  startTime: l.startTime,
-                  endTime: l.endTime,
-                  title: l.title,
-                  type: SlotType.ACADEMIC_LESSON,
-                  isGhost: false,
-                  status: SlotStatus.PENDING,
-                  orderIndex: i,
-                },
-              });
-            }
-          } else if (d === 6) {
-            // Saturday: 2 self-study slots
-            await prisma.daySlot.createMany({
-              data: [
-                {
-                  dayId: day.id,
-                  startTime: '10:00',
-                  endTime: '12:00',
-                  title: 'Проектный хакатон Mezon',
-                  type: SlotType.SELF_STUDY,
-                  isGhost: false,
-                  status: SlotStatus.PENDING,
-                  orderIndex: 0,
-                },
-                {
-                  dayId: day.id,
-                  startTime: '13:00',
-                  endTime: '15:00',
-                  title: 'Индивидуальная траектория и исследования',
-                  type: SlotType.SELF_STUDY,
-                  isGhost: false,
-                  status: SlotStatus.PENDING,
-                  orderIndex: 1,
-                },
-              ],
-            });
-          }
-        }
       }
     }
+
+    // If role is STUDENT, automatically generate 10-week sprint using sprint generator
+    if (roleInput === 'STUDENT') {
+      const currentYear = new Date().getFullYear();
+      const sprintTitle = `1 четверть ${currentYear}-${currentYear + 1} (${gradeLevel} класс)`;
+      const startDate = mondayOnOrBefore(todayUTC());
+
+      await generateSprintForStudent({
+        studentId: newUser.id,
+        gradeLevel,
+        title: sprintTitle,
+        startDate,
+        weeksTotal: 10,
+      });
+    }
+
+    await audit({
+      actorId: admin.id,
+      actorName: admin.fullName,
+      action: 'USER_CREATED',
+      targetType: 'USER',
+      targetId: newUser.id,
+      targetName: newUser.fullName,
+      details: `Создан пользователь ${newUser.fullName} (@${newUser.username}, роль: ${newUser.role})`,
+    });
 
     return NextResponse.json({
       success: true,

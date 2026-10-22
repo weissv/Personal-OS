@@ -1,51 +1,57 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
-import { getCurrentUser } from '@/lib/auth';
 import { Role } from '@prisma/client';
+import { authenticate, canAccessStudent, denyResponse, notFoundResponse, studentIdForWeek } from '@/lib/auth';
+import { audit } from '@/lib/audit';
 
 export async function POST(req: NextRequest) {
   try {
-    const currentUser = await getCurrentUser();
-    const body = await req.json();
+    const auth = await authenticate({ roles: [Role.MENTOR, Role.ADMIN] });
+    if (!auth.ok) return auth.response;
+
+    const { user } = auth.ctx;
+    const body = await req.json().catch(() => ({}));
     const { weekId, feedback, mentorId: customMentorId } = body;
 
-    if (!weekId || !feedback) {
+    if (!weekId || !feedback || !String(feedback).trim()) {
       return NextResponse.json(
-        { error: 'weekId and feedback are required' },
+        { error: 'weekId и feedback обязательны для заполнения' },
         { status: 400 }
       );
     }
 
-    // Determine mentor ID
-    let mentorId = customMentorId;
-    if (!mentorId) {
-      if (currentUser?.role === Role.MENTOR) {
-        mentorId = currentUser.id;
-      } else {
-        const defaultMentor = await prisma.user.findFirst({
-          where: { role: Role.MENTOR },
-        });
-        mentorId = defaultMentor?.id;
-      }
+    const studentId = await studentIdForWeek(weekId);
+    if (!studentId) return notFoundResponse('Учебная неделя не найдена');
+
+    if (!(await canAccessStudent(auth.ctx, studentId, 'read'))) {
+      return denyResponse();
     }
 
-    if (!mentorId) {
-      return NextResponse.json({ error: 'Mentor not found' }, { status: 404 });
-    }
+    // Determine mentor ID: use current user's ID, or if admin, allow customMentorId
+    const mentorId = (user.role === Role.ADMIN && customMentorId) ? customMentorId : user.id;
 
     const review = await prisma.mentorReview.upsert({
       where: { weekId },
       update: {
         mentorId,
-        feedback,
+        feedback: String(feedback).trim(),
         signedAt: new Date(),
       },
       create: {
         weekId,
         mentorId,
-        feedback,
+        feedback: String(feedback).trim(),
         signedAt: new Date(),
       },
+    });
+
+    await audit({
+      actorId: user.id,
+      actorName: user.fullName,
+      action: 'MENTOR_REVIEW_SIGNED',
+      targetType: 'WEEK',
+      targetId: weekId,
+      details: `Ревью наставника сохранено для недели ${weekId}`,
     });
 
     return NextResponse.json({

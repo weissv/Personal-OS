@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
-import { getCurrentUser, isUserGodmode } from '@/lib/auth';
+import { getCurrentUser, isUserGodmode, handleApiError } from '@/lib/auth';
+
 
 export async function GET() {
   try {
@@ -153,7 +154,6 @@ export async function GET() {
       },
     });
   } catch (error) {
-    console.error('Failed to get admin stats:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    return handleApiError('admin/stats', error);
   }
 }

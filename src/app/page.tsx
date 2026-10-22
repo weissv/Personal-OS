@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { NavigationHeader, ViewMode } from '@/components/NavigationHeader';
+import { NavigationHeader, ViewMode, AppUser } from '@/components/NavigationHeader';
 import { MorningFocusView } from '@/components/MorningFocusView';
 import { EveningDebriefView } from '@/components/EveningDebriefView';
 import { SaturdaySelfStudyView } from '@/components/SaturdaySelfStudyView';
@@ -13,15 +13,6 @@ import { AdminGodmodeView } from '@/components/AdminGodmodeView';
 import { MezonCoverView } from '@/components/MezonCoverView';
 import { SprintSpine } from '@/components/SprintSpine';
 import { Loading } from '@/components/ui';
-
-interface CurrentUser {
-  id: string;
-  fullName: string;
-  username?: string | null;
-  email: string;
-  role: string;
-  gradeLevel?: number | null;
-}
 
 interface WeekData {
   id: string;
@@ -88,12 +79,12 @@ interface WeekData {
 
 export default function Home() {
   const router = useRouter();
-  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
+  const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
   const [isGodmode, setIsGodmode] = useState(false);
   const [isImpersonating, setIsImpersonating] = useState(false);
-  const [availableUsers, setAvailableUsers] = useState<CurrentUser[]>([]);
+  const [availableUsers, setAvailableUsers] = useState<AppUser[]>([]);
   const [currentView, setCurrentView] = useState<ViewMode>('morning');
-  const [selectedWeekNumber, setSelectedWeekNumber] = useState(3);
+  const [selectedWeekNumber, setSelectedWeekNumber] = useState(1);
   const [selectedDayOfWeek, setSelectedDayOfWeek] = useState(1);
   const [isMobileDeviceFrame, setIsMobileDeviceFrame] = useState(false);
   const [isCoverOpen, setIsCoverOpen] = useState(false);
@@ -102,7 +93,7 @@ export default function Home() {
   // Active week data
   const [weekData, setWeekData] = useState<WeekData | null>(null);
   const [sprintWeeks, setSprintWeeks] = useState<Array<{ weekNumber: number; isSubmitted: boolean }>>([]);
-  const CURRENT_WEEK = 3;
+  const [currentWeekNum, setCurrentWeekNum] = useState(1);
 
   // Fetch auth
   const loadUser = async () => {
@@ -132,7 +123,7 @@ export default function Home() {
   };
 
   // Fetch active sprint & week
-  const loadSprintAndWeek = async (weekNum: number = selectedWeekNumber) => {
+  const loadSprintAndWeek = async (weekNum?: number) => {
     try {
       setIsLoading(true);
       const sprintRes = await fetch('/api/v1/sprints/active');
@@ -142,10 +133,16 @@ export default function Home() {
       }
       const sprintJson = await sprintRes.json();
       const sprint = sprintJson.sprint;
-      if (!sprint) {
+      if (!sprint || !sprint.weeks || sprint.weeks.length === 0) {
+        setWeekData(null);
         setIsLoading(false);
         return;
       }
+
+      const activeNum = sprintJson.activeWeekNumber || 1;
+      setCurrentWeekNum(activeNum);
+      const targetNum = weekNum !== undefined ? weekNum : activeNum;
+      setSelectedWeekNumber(targetNum);
 
       setSprintWeeks(
         (sprint.weeks || []).map((w: { weekNumber: number; isSubmitted: boolean }) => ({
@@ -155,8 +152,9 @@ export default function Home() {
       );
 
       const targetWeek =
-        sprint.weeks?.find((w: { weekNumber: number }) => w.weekNumber === weekNum) ||
-        sprint.weeks?.[0];
+        sprint.weeks.find((w: { weekNumber: number }) => w.weekNumber === targetNum) ||
+        sprint.weeks[0];
+
       if (!targetWeek) {
         setIsLoading(false);
         return;
@@ -187,7 +185,7 @@ export default function Home() {
         } else {
           setCurrentView('morning');
         }
-        loadSprintAndWeek(selectedWeekNumber);
+        await loadSprintAndWeek();
       }
     };
     init();
@@ -213,7 +211,7 @@ export default function Home() {
         } else {
           setCurrentView('morning');
         }
-        loadSprintAndWeek(selectedWeekNumber);
+        await loadSprintAndWeek();
       }
     } catch (e) {
       console.error(e);
@@ -270,8 +268,10 @@ export default function Home() {
   const saturdayDay = weekData?.days.find((d) => d.dayOfWeek === 6);
 
   const DAY_SHORT: Record<number, string> = { 1: 'Пн', 2: 'Вт', 3: 'Ср', 4: 'Чт', 5: 'Пт' };
-  const showSpine = !isCoverOpen && currentView !== 'mentor' && currentView !== 'godmode';
+  const showSpine = !isCoverOpen && currentView !== 'mentor' && currentView !== 'godmode' && weekData;
   const showDays = !isCoverOpen && (currentView === 'morning' || currentView === 'evening') && weekData;
+
+  const displayName = weekData?.sprint?.student?.fullName || currentUser?.fullName || 'Ученик';
 
   return (
     <div className="mz-app">
@@ -316,7 +316,7 @@ export default function Home() {
               <SprintSpine
                 weeks={sprintWeeks}
                 selectedWeekNumber={selectedWeekNumber}
-                currentWeekNumber={CURRENT_WEEK}
+                currentWeekNumber={currentWeekNum}
                 onSelectWeek={handleSelectWeek}
               />
             )}
@@ -371,9 +371,49 @@ export default function Home() {
               <AdminGodmodeView onSwitchToUser={handleSwitchUser} />
             ) : isLoading && !weekData ? (
               <Loading label="Загружаю спринт Mezon…" />
+            ) : !weekData ? (
+              <div
+                style={{
+                  textAlign: 'center',
+                  padding: '60px 24px',
+                  maxWidth: 520,
+                  margin: '40px auto',
+                  background: '#ffffff',
+                  border: '2px solid #222222',
+                  boxShadow: '0 8px 24px rgba(0,0,0,0.06)',
+                }}
+              >
+                <div style={{ fontSize: 44, marginBottom: 12 }}>📋</div>
+                <h2 style={{ fontSize: 20, fontWeight: 800, margin: '0 0 10px 0' }}>
+                  Учебный спринт пока не назначен
+                </h2>
+                <p style={{ color: '#5f5f5f', fontSize: 14, lineHeight: 1.6, margin: '0 0 20px 0' }}>
+                  Здравствуйте, <strong>{currentUser?.fullName}</strong>! Ваша учетная запись активна.
+                  Куратор или администратор школы создаст спринт и привяжет расписание вашей параллели.
+                </p>
+                {isGodmode && (
+                  <button
+                    type="button"
+                    onClick={() => setCurrentView('godmode')}
+                    style={{
+                      background: '#00859e',
+                      color: '#ffffff',
+                      border: 'none',
+                      padding: '12px 24px',
+                      fontWeight: 800,
+                      fontSize: 13,
+                      cursor: 'pointer',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.5px',
+                    }}
+                  >
+                    Открыть панель управления Godmode
+                  </button>
+                )}
+              </div>
             ) : isCoverOpen ? (
               <MezonCoverView
-                studentName={currentUser?.fullName || 'Даврон Рахимов'}
+                studentName={displayName}
                 gradeLevel={currentUser?.gradeLevel || 9}
                 onOpenSpread={() => setIsCoverOpen(false)}
               />
@@ -386,11 +426,11 @@ export default function Home() {
                   month: 'short',
                 })}
                 slots={currentDay.slots}
-                weekGoal={weekData?.weekGoal}
+                weekGoal={weekData.weekGoal}
                 onSlotUpdated={() => loadSprintAndWeek(selectedWeekNumber)}
                 onNavigateToEvening={() => setCurrentView('evening')}
               />
-            ) : currentView === 'evening' && currentDay && weekData ? (
+            ) : currentView === 'evening' && currentDay ? (
               <EveningDebriefView
                 dayId={currentDay.id}
                 weekId={weekData.id}
@@ -414,7 +454,7 @@ export default function Home() {
                 slots={saturdayDay.slots}
                 onSlotUpdated={() => loadSprintAndWeek(selectedWeekNumber)}
               />
-            ) : currentView === 'retro' && weekData ? (
+            ) : currentView === 'retro' ? (
               <WeeklyRetroView
                 weekId={weekData.id}
                 weekNumber={weekData.weekNumber}
@@ -429,9 +469,9 @@ export default function Home() {
               />
             ) : currentView === 'mentor' ? (
               <MentorDashboardView />
-            ) : currentView === 'parent' && weekData ? (
+            ) : currentView === 'parent' ? (
               <ParentPortalView
-                studentName={weekData.sprint?.student?.fullName || 'Даврон Рахимов'}
+                studentName={displayName}
                 accessLevel={weekData.parentAccessLevel}
                 weekNumber={weekData.weekNumber}
                 weekGoal={weekData.weekGoal}

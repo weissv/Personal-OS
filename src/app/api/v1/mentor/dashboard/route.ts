@@ -1,6 +1,8 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { Role, SlotStatus } from '@prisma/client';
+import { authenticate, handleApiError } from '@/lib/auth';
+
 
 export interface StudentRedFlags {
   highMigrations: boolean;
@@ -13,14 +15,30 @@ export interface StudentRedFlags {
   silentRetroSnippet?: string;
 }
 
-export async function GET(req: Request) {
+export async function GET(req: NextRequest) {
   try {
-    // 1. Fetch all Grade 9 students
+    const auth = await authenticate({ roles: [Role.MENTOR, Role.ADMIN] });
+    if (!auth.ok) return auth.response;
+
+    const { user } = auth.ctx;
+    const url = new URL(req.url);
+    const requestedGrade = url.searchParams.get('grade');
+
+    let gradeFilter: number | undefined = undefined;
+    if (requestedGrade && !isNaN(Number(requestedGrade))) {
+      gradeFilter = Number(requestedGrade);
+    } else if (user.role === Role.MENTOR && user.gradeLevel) {
+      gradeFilter = user.gradeLevel;
+    }
+
+    const whereClause: { role: Role; gradeLevel?: number } = {
+      role: Role.STUDENT,
+      ...(gradeFilter ? { gradeLevel: gradeFilter } : {}),
+    };
+
+    // 1. Fetch students for the mentor's cohort
     const students = await prisma.user.findMany({
-      where: {
-        role: Role.STUDENT,
-        gradeLevel: 9,
-      },
+      where: whereClause,
       include: {
         sprints: {
           orderBy: { createdAt: 'desc' },
@@ -42,7 +60,7 @@ export async function GET(req: Request) {
           },
         },
       },
-      orderBy: { fullName: 'asc' },
+      orderBy: [{ gradeLevel: 'asc' }, { fullName: 'asc' }],
     });
 
     const studentRows = students.map((student) => {
@@ -59,9 +77,7 @@ export async function GET(req: Request) {
       let hasSilentRetro = false;
       let silentRetroSnippet = '';
 
-      // Check each week
       for (const week of weeks) {
-        // Collect non-ghost slots
         const allSlots = week.days.flatMap((d) => d.slots).filter((s) => !s.isGhost);
         for (const slot of allSlots) {
           totalTasks++;
@@ -70,7 +86,6 @@ export async function GET(req: Request) {
           if (slot.status === SlotStatus.DROPPED) droppedTasks++;
         }
 
-        // Check Saturday self study
         const saturday = week.days.find((d) => d.dayOfWeek === 6);
         const satSlots = saturday?.slots.filter((s) => !s.isGhost) || [];
         if (week.isSubmitted || week.weekNumber < 3) {
@@ -84,7 +99,6 @@ export async function GET(req: Request) {
           }
         }
 
-        // Check Silent Retro: any question answered with < 10 characters
         if (week.isSubmitted) {
           const answers = [week.retroSuccess, week.retroBlockers, week.retroNextPlan];
           for (const ans of answers) {
@@ -111,7 +125,6 @@ export async function GET(req: Request) {
         silentRetroSnippet: silentRetroSnippet || undefined,
       };
 
-      // Current week (Week 3 in seed)
       const currentWeek = weeks.find((w) => w.weekNumber === 3) || weeks[weeks.length - 1];
 
       return {
@@ -157,8 +170,10 @@ export async function GET(req: Request) {
       };
     });
 
+    const cohortLabel = gradeFilter ? `${gradeFilter} класс` : 'Все классы школы';
+
     return NextResponse.json({
-      className: '9 «А» класс',
+      className: cohortLabel,
       studentsCount: studentRows.length,
       redFlagsSummary: {
         highMigrationsCount: studentRows.filter((r) => r.flags.highMigrations).length,
@@ -168,7 +183,6 @@ export async function GET(req: Request) {
       students: studentRows,
     });
   } catch (error) {
-    console.error('Mentor dashboard error:', error);
-    return NextResponse.json({ error: 'Failed to generate mentor dashboard' }, { status: 500 });
+    return handleApiError('mentor/dashboard', error);
   }
 }

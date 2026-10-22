@@ -14,12 +14,13 @@ import {
   ExternalLink,
   Sparkles,
   LogOut,
-  ArrowLeftRight,
+  Menu,
+  X,
 } from 'lucide-react';
 
 export type ViewMode = 'morning' | 'evening' | 'saturday' | 'retro' | 'mentor' | 'parent' | 'godmode';
 
-interface DemoUser {
+export interface AppUser {
   id: string;
   fullName: string;
   username?: string | null;
@@ -31,8 +32,8 @@ interface DemoUser {
 interface NavigationHeaderProps {
   currentView: ViewMode;
   onViewChange: (view: ViewMode) => void;
-  currentUser: DemoUser | null;
-  availableUsers: DemoUser[];
+  currentUser: AppUser | null;
+  availableUsers: AppUser[];
   onSwitchUser: (userId: string) => void;
   isMobileDeviceFrame: boolean;
   onToggleDeviceFrame: () => void;
@@ -51,7 +52,6 @@ const ROLE_LABEL: Record<string, string> = {
   ADMIN: 'Основатель (Godmode)',
 };
 
-// Cooper: персоны. Каждая роль видит только те режимы, которые нужны для её цели.
 const NAV: Array<{
   view: ViewMode;
   label: string;
@@ -64,17 +64,15 @@ const NAV: Array<{
   { view: 'evening', label: 'Вечер', hint: '16:45', icon: <Moon size={22} />, roles: ['STUDENT'] },
   { view: 'saturday', label: 'Сб', hint: 'проект', icon: <Hammer size={22} />, roles: ['STUDENT'] },
   { view: 'retro', label: 'Вс', hint: 'ретро', icon: <RotateCw size={22} />, roles: ['STUDENT'] },
-  { view: 'mentor', label: 'Куратор', hint: '9 «А»', icon: <Compass size={22} />, roles: ['MENTOR'] },
+  { view: 'mentor', label: 'Куратор', hint: 'Класс', icon: <Compass size={22} />, roles: ['MENTOR'] },
   { view: 'parent', label: 'Родитель', hint: 'доверие', icon: <ShieldCheck size={22} />, roles: ['PARENT'] },
 ];
 
-function archetype(u: DemoUser): string {
-  if (u.username === 'somi' || u.role === 'ADMIN') return '⚡ Полный GODMODE';
-  if (u.email === 'davron@mezon.uz' || u.username === 'davron') return 'Эталон субъектности';
-  if (u.email === 'leila@mezon.uz' || u.username === 'leila') return 'Флаг: >50% переносов';
-  if (u.email === 'sardor@mezon.uz' || u.username === 'sardor') return 'Флаги: пустая суббота, ретро-отписки';
-  if (u.role === 'MENTOR') return 'Куратор 9 «А»';
-  if (u.role === 'PARENT') return 'Родитель · Selective Trust';
+function getUserSubtitle(u: AppUser): string {
+  if (u.role === 'ADMIN') return '⚡ Полный GODMODE';
+  if (u.role === 'STUDENT') return u.gradeLevel ? `${u.gradeLevel} класс` : 'Ученик';
+  if (u.role === 'MENTOR') return u.gradeLevel ? `Куратор ${u.gradeLevel} класса` : 'Куратор школы';
+  if (u.role === 'PARENT') return 'Родитель (Selective Trust)';
   return '';
 }
 
@@ -97,7 +95,6 @@ export const NavigationHeader: React.FC<NavigationHeaderProps> = ({
 
   const role = currentUser?.role;
   let items = role ? NAV.filter((n) => n.roles.includes(role)) : NAV;
-  // If user is Godmode, allow accessing the godmode tab even while testing other roles
   if (isGodmode && !items.some((i) => i.view === 'godmode')) {
     items = [{ view: 'godmode', label: 'Godmode', hint: 'Школа', icon: <Sparkles size={22} />, roles: ['ADMIN'] }, ...items];
   }
@@ -110,19 +107,21 @@ export const NavigationHeader: React.FC<NavigationHeaderProps> = ({
           style={{
             background: 'linear-gradient(90deg, #a04a84, #873b6d)',
             color: '#fff',
-            padding: '8px 24px',
+            padding: '8px 16px',
             fontSize: 13,
             fontWeight: 700,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: 8,
             zIndex: 100,
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <Sparkles size={16} color="#fcd5a6" />
             <span>
-              ⚡ Режим имперсонации: Просмотр от лица <strong>{currentUser?.fullName}</strong> ({ROLE_LABEL[role || ''] || role})
+              ⚡ Просмотр от лица <strong>{currentUser?.fullName}</strong> ({ROLE_LABEL[role || ''] || role})
             </span>
           </div>
           <button
@@ -145,7 +144,7 @@ export const NavigationHeader: React.FC<NavigationHeaderProps> = ({
         </div>
       )}
 
-      {/* Полоса экосистемы: связь с mezon.uz */}
+      {/* Ecosystem strip */}
       <div className="mz-strip">
         <div className="mz-strip__inner">
           <div className="mz-strip__text">
@@ -161,7 +160,11 @@ export const NavigationHeader: React.FC<NavigationHeaderProps> = ({
       </div>
 
       <header className="mz-header">
-        <div className="mz-logo" onClick={() => isGodmode && onViewChange('godmode')} style={{ cursor: isGodmode ? 'pointer' : 'default' }}>
+        <div
+          className="mz-logo"
+          onClick={() => isGodmode && onViewChange('godmode')}
+          style={{ cursor: isGodmode ? 'pointer' : 'default' }}
+        >
           <Image src="/brand/logo.png" alt="Mezon Inspiring School" width={118} height={53} priority />
           <div className="mz-logo__os">
             Sprint OS
@@ -219,7 +222,10 @@ export const NavigationHeader: React.FC<NavigationHeaderProps> = ({
               aria-haspopup="menu"
               aria-expanded={userMenuOpen}
             >
-              <div className="mz-user__ava" style={{ background: role === 'ADMIN' ? '#a04a84' : undefined, color: '#fff' }}>
+              <div
+                className="mz-user__ava"
+                style={{ background: role === 'ADMIN' ? '#a04a84' : undefined, color: '#fff' }}
+              >
                 {currentUser?.fullName?.charAt(0) || '?'}
               </div>
               <div className="mz-user__meta">
@@ -246,7 +252,7 @@ export const NavigationHeader: React.FC<NavigationHeaderProps> = ({
                       onClick={() => setUserMenuOpen(false)}
                       style={{ marginLeft: 'auto', fontSize: 13, color: 'var(--text-soft)' }}
                     >
-                      ✕ Закрыть
+                      ✕
                     </button>
                   </div>
 
@@ -266,7 +272,7 @@ export const NavigationHeader: React.FC<NavigationHeaderProps> = ({
                         >
                           <b>{u.fullName}</b>
                           <small>
-                            {ROLE_LABEL[u.role] || u.role} · {archetype(u)}
+                            {ROLE_LABEL[u.role] || u.role} · {getUserSubtitle(u)}
                           </small>
                         </button>
                       ))}
@@ -306,7 +312,7 @@ export const NavigationHeader: React.FC<NavigationHeaderProps> = ({
       </header>
 
       <div className="mz-shell">
-        {/* Левая рейка (desktop) */}
+        {/* Left rail (desktop) */}
         <nav className="mz-rail" aria-label="Режимы дня">
           {items.map((n) => (
             <button
@@ -339,7 +345,7 @@ export const NavigationHeader: React.FC<NavigationHeaderProps> = ({
         {children}
       </div>
 
-      {/* Нижняя панель (mobile) */}
+      {/* Bottom tabbar (mobile) */}
       <nav className="mz-tabbar" aria-label="Режимы дня">
         {items.map((n) => (
           <button

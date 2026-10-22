@@ -1,14 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { SlotType, SlotStatus } from '@prisma/client';
+import { authenticate, canAccessStudent, denyResponse, notFoundResponse, studentIdForDay } from '@/lib/auth';
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
+    const auth = await authenticate();
+    if (!auth.ok) return auth.response;
+
+    const body = await req.json().catch(() => ({}));
     const { dayId, title, startTime, endTime, taskGoal, deliverable, type } = body;
 
     if (!dayId || !title) {
-      return NextResponse.json({ error: 'dayId and title are required' }, { status: 400 });
+      return NextResponse.json({ error: 'dayId и title обязательны' }, { status: 400 });
+    }
+
+    const studentId = await studentIdForDay(dayId);
+    if (!studentId) return notFoundResponse('День не найден');
+
+    if (!(await canAccessStudent(auth.ctx, studentId, 'write'))) {
+      return denyResponse();
     }
 
     const day = await prisma.day.findUnique({
@@ -16,13 +27,13 @@ export async function POST(req: NextRequest) {
     });
 
     if (!day) {
-      return NextResponse.json({ error: 'Day not found' }, { status: 404 });
+      return notFoundResponse('День не найден');
     }
 
     const slot = await prisma.daySlot.create({
       data: {
         dayId,
-        title,
+        title: String(title).slice(0, 150),
         startTime: startTime || null,
         endTime: endTime || null,
         taskGoal: taskGoal || null,
