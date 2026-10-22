@@ -8,27 +8,32 @@ export async function GET(req: NextRequest) {
     const requestedStudentId = searchParams.get('studentId');
 
     const currentUser = await getCurrentUser();
+    if (!currentUser) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     let targetStudentId = requestedStudentId;
 
     if (!targetStudentId) {
-      if (currentUser?.role === 'STUDENT') {
+      if (currentUser.role === 'STUDENT') {
         targetStudentId = currentUser.id;
-      } else if (currentUser?.role === 'PARENT') {
+      } else if (currentUser.role === 'PARENT') {
         const link = await prisma.parentStudentLink.findFirst({
           where: { parentId: currentUser.id },
         });
         targetStudentId = link?.studentId || null;
       } else {
-        // Mentor or admin: default to Davron
-        const davron = await prisma.user.findFirst({
-          where: { email: 'davron@mezon.uz' },
+        // Mentor or admin: pick active student
+        const firstStudent = await prisma.user.findFirst({
+          where: { role: 'STUDENT' },
+          orderBy: { fullName: 'asc' },
         });
-        targetStudentId = davron?.id || null;
+        targetStudentId = firstStudent?.id || null;
       }
     }
 
     if (!targetStudentId) {
-      return NextResponse.json({ error: 'No student found' }, { status: 404 });
+      return NextResponse.json({ sprint: null, parentAccessLevel: 'REVOKED' });
     }
 
     const sprint = await prisma.sprint.findFirst({
@@ -52,7 +57,7 @@ export async function GET(req: NextRequest) {
     });
 
     if (!sprint) {
-      return NextResponse.json({ error: 'No active sprint found' }, { status: 404 });
+      return NextResponse.json({ sprint: null, parentAccessLevel: 'REVOKED' });
     }
 
     const parentLink = await prisma.parentStudentLink.findFirst({

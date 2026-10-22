@@ -1,6 +1,13 @@
+const crypto = require('crypto');
 const { PrismaClient, Role, SlotType, SlotStatus, ParentAccessLevel } = require('@prisma/client');
 
 const prisma = new PrismaClient();
+
+function hashPassword(password) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
+  return `${salt}:${hash}`;
+}
 
 async function main() {
   console.log('Seeding Mezon Sprint OS database...');
@@ -16,10 +23,25 @@ async function main() {
   await prisma.parentStudentLink.deleteMany();
   await prisma.user.deleteMany();
 
+  // 0. Create GODMODE Admin (Somi)
+  const defaultPasswordHash = hashPassword('Mezon13!');
+
+  const somi = await prisma.user.create({
+    data: {
+      username: 'somi',
+      email: 'somi@mezon.uz',
+      passwordHash: defaultPasswordHash,
+      fullName: 'Somi (Founder · Godmode)',
+      role: Role.ADMIN,
+    },
+  });
+
   // 1. Create Curator / Mentor
   const mentor = await prisma.user.create({
     data: {
+      username: 'curator',
       email: 'curator@mezon.uz',
+      passwordHash: defaultPasswordHash,
       fullName: 'Малика Камалова',
       role: Role.MENTOR,
       gradeLevel: 9,
@@ -30,7 +52,9 @@ async function main() {
   // Student 1: Davron (Exemplary Student Agency)
   const davron = await prisma.user.create({
     data: {
+      username: 'davron',
       email: 'davron@mezon.uz',
+      passwordHash: defaultPasswordHash,
       fullName: 'Даврон Рахимов',
       role: Role.STUDENT,
       gradeLevel: 9,
@@ -40,7 +64,9 @@ async function main() {
   // Student 2: Leila (Red flag: High Migrations > 50%)
   const leila = await prisma.user.create({
     data: {
+      username: 'leila',
       email: 'leila@mezon.uz',
+      passwordHash: defaultPasswordHash,
       fullName: 'Лейла Каримова',
       role: Role.STUDENT,
       gradeLevel: 9,
@@ -50,7 +76,9 @@ async function main() {
   // Student 3: Sardor (Red flags: Silent Retro < 10 chars & Empty Self-Study)
   const sardor = await prisma.user.create({
     data: {
+      username: 'sardor',
       email: 'sardor@mezon.uz',
+      passwordHash: defaultPasswordHash,
       fullName: 'Сардор Умаров',
       role: Role.STUDENT,
       gradeLevel: 9,
@@ -60,7 +88,9 @@ async function main() {
   // 3. Create Parent for Davron
   const parentDavron = await prisma.user.create({
     data: {
+      username: 'parent',
       email: 'parent.davron@mezon.uz',
+      passwordHash: defaultPasswordHash,
       fullName: 'Азиз Рахимов',
       role: Role.PARENT,
     },
@@ -74,7 +104,7 @@ async function main() {
     },
   });
 
-  console.log('Users created: Mentor, 3 Students, 1 Parent');
+  console.log('Users created: Somi (ADMIN/GODMODE), Mentor, 3 Students, 1 Parent');
 
   // Timetable template (Ghost Slots) for Monday to Friday
   const timetableTemplates = {

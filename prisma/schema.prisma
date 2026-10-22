@@ -37,6 +37,8 @@ enum ParentAccessLevel {
 model User {
   id            String    @id @default(uuid())
   email         String    @unique
+  username      String?   @unique
+  passwordHash  String?
   fullName      String
   role          Role      @default(STUDENT)
   gradeLevel    Int?      // e.g., 9

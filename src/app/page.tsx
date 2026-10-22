@@ -1,6 +1,7 @@
-﻿'use client';
+'use client';
 
 import React, { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { NavigationHeader, ViewMode } from '@/components/NavigationHeader';
 import { MorningFocusView } from '@/components/MorningFocusView';
 import { EveningDebriefView } from '@/components/EveningDebriefView';
@@ -8,6 +9,7 @@ import { SaturdaySelfStudyView } from '@/components/SaturdaySelfStudyView';
 import { WeeklyRetroView } from '@/components/WeeklyRetroView';
 import { MentorDashboardView } from '@/components/MentorDashboardView';
 import { ParentPortalView } from '@/components/ParentPortalView';
+import { AdminGodmodeView } from '@/components/AdminGodmodeView';
 import { MezonCoverView } from '@/components/MezonCoverView';
 import { SprintSpine } from '@/components/SprintSpine';
 import { Loading } from '@/components/ui';
@@ -15,6 +17,7 @@ import { Loading } from '@/components/ui';
 interface CurrentUser {
   id: string;
   fullName: string;
+  username?: string | null;
   email: string;
   role: string;
   gradeLevel?: number | null;
@@ -84,18 +87,20 @@ interface WeekData {
 }
 
 export default function Home() {
+  const router = useRouter();
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
+  const [isGodmode, setIsGodmode] = useState(false);
+  const [isImpersonating, setIsImpersonating] = useState(false);
   const [availableUsers, setAvailableUsers] = useState<CurrentUser[]>([]);
   const [currentView, setCurrentView] = useState<ViewMode>('morning');
-  const [selectedWeekNumber, setSelectedWeekNumber] = useState(3); // Default Week 3 (Active)
-  const [selectedDayOfWeek, setSelectedDayOfWeek] = useState(1); // Default Monday (Day 1)
+  const [selectedWeekNumber, setSelectedWeekNumber] = useState(3);
+  const [selectedDayOfWeek, setSelectedDayOfWeek] = useState(1);
   const [isMobileDeviceFrame, setIsMobileDeviceFrame] = useState(false);
   const [isCoverOpen, setIsCoverOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
   // Active week data
   const [weekData, setWeekData] = useState<WeekData | null>(null);
-  // Все недели спринта (для small multiples)
   const [sprintWeeks, setSprintWeeks] = useState<Array<{ weekNumber: number; isSubmitted: boolean }>>([]);
   const CURRENT_WEEK = 3;
 
@@ -103,13 +108,26 @@ export default function Home() {
   const loadUser = async () => {
     try {
       const res = await fetch('/api/v1/auth/me');
-      if (res.ok) {
-        const json = await res.json();
-        setCurrentUser(json.user);
-        setAvailableUsers(json.availableUsers || []);
+      if (!res.ok) {
+        router.push('/login');
+        return null;
       }
+      const json = await res.json();
+      if (!json.user) {
+        router.push('/login');
+        return null;
+      }
+
+      setCurrentUser(json.user);
+      setIsGodmode(json.isGodmode || false);
+      setIsImpersonating(json.isImpersonating || false);
+      setAvailableUsers(json.availableUsers || []);
+
+      return json.user;
     } catch (e) {
       console.error(e);
+      router.push('/login');
+      return null;
     }
   };
 
@@ -118,10 +136,16 @@ export default function Home() {
     try {
       setIsLoading(true);
       const sprintRes = await fetch('/api/v1/sprints/active');
-      if (!sprintRes.ok) return;
+      if (!sprintRes.ok) {
+        setIsLoading(false);
+        return;
+      }
       const sprintJson = await sprintRes.json();
       const sprint = sprintJson.sprint;
-      if (!sprint) return;
+      if (!sprint) {
+        setIsLoading(false);
+        return;
+      }
 
       setSprintWeeks(
         (sprint.weeks || []).map((w: { weekNumber: number; isSubmitted: boolean }) => ({
@@ -133,7 +157,10 @@ export default function Home() {
       const targetWeek =
         sprint.weeks?.find((w: { weekNumber: number }) => w.weekNumber === weekNum) ||
         sprint.weeks?.[0];
-      if (!targetWeek) return;
+      if (!targetWeek) {
+        setIsLoading(false);
+        return;
+      }
 
       const weekRes = await fetch(`/api/v1/weeks/${targetWeek.id}`);
       if (weekRes.ok) {
@@ -148,8 +175,22 @@ export default function Home() {
   };
 
   useEffect(() => {
-    loadUser();
-    loadSprintAndWeek(selectedWeekNumber);
+    const init = async () => {
+      const user = await loadUser();
+      if (user) {
+        if (user.role === 'ADMIN') {
+          setCurrentView('godmode');
+        } else if (user.role === 'MENTOR') {
+          setCurrentView('mentor');
+        } else if (user.role === 'PARENT') {
+          setCurrentView('parent');
+        } else {
+          setCurrentView('morning');
+        }
+        loadSprintAndWeek(selectedWeekNumber);
+      }
+    };
+    init();
   }, []);
 
   const handleSwitchUser = async (userId: string) => {
@@ -162,10 +203,13 @@ export default function Home() {
       if (res.ok) {
         const json = await res.json();
         setCurrentUser(json.user);
+        setIsImpersonating(json.isImpersonating || false);
         if (json.user.role === 'MENTOR') {
           setCurrentView('mentor');
         } else if (json.user.role === 'PARENT') {
           setCurrentView('parent');
+        } else if (json.user.role === 'ADMIN') {
+          setCurrentView('godmode');
         } else {
           setCurrentView('morning');
         }
@@ -173,6 +217,33 @@ export default function Home() {
       }
     } catch (e) {
       console.error(e);
+    }
+  };
+
+  const handleRevertToAdmin = async () => {
+    try {
+      const res = await fetch('/api/v1/auth/switch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ revertToAdmin: true }),
+      });
+      if (res.ok) {
+        const json = await res.json();
+        setCurrentUser(json.user);
+        setIsGodmode(true);
+        setIsImpersonating(false);
+        setCurrentView('godmode');
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await fetch('/api/v1/auth/logout', { method: 'POST' });
+    } finally {
+      router.push('/login');
     }
   };
 
@@ -199,7 +270,7 @@ export default function Home() {
   const saturdayDay = weekData?.days.find((d) => d.dayOfWeek === 6);
 
   const DAY_SHORT: Record<number, string> = { 1: 'Пн', 2: 'Вт', 3: 'Ср', 4: 'Чт', 5: 'Пт' };
-  const showSpine = !isCoverOpen && currentView !== 'mentor';
+  const showSpine = !isCoverOpen && currentView !== 'mentor' && currentView !== 'godmode';
   const showDays = !isCoverOpen && (currentView === 'morning' || currentView === 'evening') && weekData;
 
   return (
@@ -220,11 +291,17 @@ export default function Home() {
         isMobileDeviceFrame={isMobileDeviceFrame}
         onToggleDeviceFrame={() => setIsMobileDeviceFrame(!isMobileDeviceFrame)}
         selectedWeekNumber={selectedWeekNumber}
+        isGodmode={isGodmode}
+        isImpersonating={isImpersonating}
+        onRevertToAdmin={handleRevertToAdmin}
+        onLogout={handleLogout}
       >
         <main className="mz-main">
           <div
             className={
-              isMobileDeviceFrame ? 'mz-frame' : `mz-page ${currentView === 'mentor' ? 'mz-page--wide' : ''}`
+              isMobileDeviceFrame
+                ? 'mz-frame'
+                : `mz-page ${currentView === 'mentor' || currentView === 'godmode' ? 'mz-page--wide' : ''}`
             }
           >
             {isMobileDeviceFrame && (
@@ -244,7 +321,7 @@ export default function Home() {
               />
             )}
 
-            {/* Дни недели — те же small multiples: доля выполненного видна без чисел */}
+            {/* Дни недели — small multiples */}
             {showDays && weekData && (
               <div className="mz-days" role="tablist" aria-label="Дни недели">
                 {[1, 2, 3, 4, 5].map((dNum) => {
@@ -273,7 +350,7 @@ export default function Home() {
               </div>
             )}
 
-            {/* Главное на неделю — якорь, виден на утре и вечере */}
+            {/* Главное на неделю */}
             {!isCoverOpen && weekData && (currentView === 'morning' || currentView === 'evening') && (
               <div className="mz-anchor">
                 <div>
@@ -289,8 +366,10 @@ export default function Home() {
               </div>
             )}
 
-            {/* Роутинг по постурам (Cooper) */}
-            {isLoading && !weekData ? (
+            {/* Posture routing */}
+            {currentView === 'godmode' ? (
+              <AdminGodmodeView onSwitchToUser={handleSwitchUser} />
+            ) : isLoading && !weekData ? (
               <Loading label="Загружаю спринт Mezon…" />
             ) : isCoverOpen ? (
               <MezonCoverView
