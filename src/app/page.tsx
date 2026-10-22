@@ -104,14 +104,13 @@ export function getSmartInitialSchedule(): { view: ViewMode; dayOfWeek: number }
 
 export default function Home() {
   const router = useRouter();
-  const smartInit = getSmartInitialSchedule();
   const [currentUser, setCurrentUser] = useState<AppUser | null>(null);
   const [isGodmode, setIsGodmode] = useState(false);
   const [isImpersonating, setIsImpersonating] = useState(false);
   const [availableUsers, setAvailableUsers] = useState<AppUser[]>([]);
-  const [currentView, setCurrentView] = useState<ViewMode>(smartInit.view);
+  const [currentView, setCurrentView] = useState<ViewMode>('morning');
   const [selectedWeekNumber, setSelectedWeekNumber] = useState(1);
-  const [selectedDayOfWeek, setSelectedDayOfWeek] = useState<number>(smartInit.dayOfWeek);
+  const [selectedDayOfWeek, setSelectedDayOfWeek] = useState<number>(1);
   const [isMobileDeviceFrame, setIsMobileDeviceFrame] = useState(false);
   const [isCoverOpen, setIsCoverOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
