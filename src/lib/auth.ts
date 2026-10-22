@@ -1,4 +1,4 @@
-import { cookies } from 'next/headers';
+import { cookies, headers } from 'next/headers';
 import { NextResponse } from 'next/server';
 import { ParentAccessLevel, Role, User } from '@prisma/client';
 import prisma from './prisma';
@@ -47,10 +47,38 @@ export interface SessionContext {
   isImpersonating: boolean;
 }
 
-export async function getSessionContext(): Promise<SessionContext | null> {
+export async function getSessionContext(explicitToken?: string | null): Promise<SessionContext | null> {
   try {
-    const cookieStore = await cookies();
-    const payload = verifySessionToken(cookieStore.get(SESSION_COOKIE)?.value);
+    let token = explicitToken;
+    if (!token) {
+      try {
+        const headerList = await headers();
+        const authHeader = headerList.get('authorization');
+        if (authHeader && authHeader.startsWith('Bearer ')) {
+          token = authHeader.slice(7).trim();
+        }
+        if (!token) {
+          const rawCookie = headerList.get('cookie') || '';
+          const match = rawCookie.match(/(?:^|;\s*)mezon_session=([^;]+)/);
+          if (match) {
+            token = decodeURIComponent(match[1]);
+          }
+        }
+      } catch {
+        // fallback if outside header context
+      }
+    }
+
+    if (!token) {
+      try {
+        const cookieStore = await cookies();
+        token = cookieStore.get(SESSION_COOKIE)?.value;
+      } catch {
+        // fallback
+      }
+    }
+
+    const payload = verifySessionToken(token);
     if (!payload) return null;
 
     const user = await prisma.user.findUnique({ where: { id: payload.u } });

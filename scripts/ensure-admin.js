@@ -273,9 +273,13 @@ async function main() {
     num++;
   }
 
-  const csvPath = path.join(process.cwd(), 'students_credentials.csv');
-  fs.writeFileSync(csvPath, '\uFEFF' + csvRows.join('\r\n'), 'utf8');
-  console.log(`✓ Updated credentials file at ${csvPath}`);
+  try {
+    const csvPath = path.join(process.cwd(), 'students_credentials.csv');
+    fs.writeFileSync(csvPath, '\uFEFF' + csvRows.join('\r\n'), 'utf8');
+    console.log(`✓ Updated credentials file at ${csvPath}`);
+  } catch (err) {
+    console.log('Skipping local CSV write in container environment');
+  }
 }
 
 main()

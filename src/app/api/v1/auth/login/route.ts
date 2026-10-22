@@ -55,12 +55,14 @@ export async function POST(req: NextRequest) {
     await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
     await audit({ actorId: user.id, actorName: user.fullName, action: 'LOGIN', targetType: 'USER', targetId: user.id, details: `ip=${ip}` });
 
+    const token = createSessionToken({ u: user.id });
     const response = NextResponse.json({
       success: true,
       user: sanitizeUser(user),
       isGodmode: isUserGodmode(user),
+      token,
     });
-    response.cookies.set(SESSION_COOKIE, createSessionToken({ u: user.id }), sessionCookieOptions);
+    response.cookies.set(SESSION_COOKIE, token, sessionCookieOptions);
     return response;
   } catch (error) {
     console.error('Login error:', error);
