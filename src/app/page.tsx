@@ -176,7 +176,18 @@ export default function Home() {
   const loadSprintAndWeek = async (weekNum?: number) => {
     try {
       setIsLoading(true);
-      const sprintRes = await fetch('/api/v1/sprints/active');
+      let token: string | null = null;
+      if (typeof window !== 'undefined') {
+        try {
+          token = localStorage.getItem('mezon_auth_token');
+        } catch {}
+      }
+      const headers: Record<string, string> = {};
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+
+      const sprintRes = await fetch('/api/v1/sprints/active', { headers });
       if (!sprintRes.ok) {
         setIsLoading(false);
         return;
@@ -210,7 +221,7 @@ export default function Home() {
         return;
       }
 
-      const weekRes = await fetch(`/api/v1/weeks/${targetWeek.id}`);
+      const weekRes = await fetch(`/api/v1/weeks/${targetWeek.id}`, { headers });
       if (weekRes.ok) {
         const weekJson = await weekRes.json();
         setWeekData(weekJson.week);
