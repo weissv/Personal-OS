@@ -10,7 +10,7 @@ export async function DELETE(
   context: { params: Promise<{ id: string }> }
 ) {
   try {
-    const auth = await authenticate({ admin: true });
+    const auth = await authenticate({ admin: true }, req);
     if (!auth.ok) return auth.response;
     const admin = auth.ctx.user;
 
@@ -53,7 +53,7 @@ export async function PATCH(
   context: { params: Promise<{ id: string }> }
 ) {
   try {
-    const auth = await authenticate({ admin: true });
+    const auth = await authenticate({ admin: true }, req);
     if (!auth.ok) return auth.response;
     const admin = auth.ctx.user;
 

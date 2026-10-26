@@ -1,8 +1,11 @@
 /**
- * Простой sliding-window rate limiter в памяти процесса.
- * Подходит для одного инстанса (текущий деплой в Coolify). При горизонтальном
- * масштабировании заменить на Redis.
+ * MEZON SPRINT OS - SLIDING WINDOW RATE LIMITER WITH IPV6 SUBNETTING
+ *
+ * Implements in-memory sliding window rate limiting.
+ * Includes IPv6 subnet masking (/64) to prevent rotational brute-force attacks
+ * across massive IPv6 pools.
  */
+
 const buckets = new Map<string, number[]>();
 
 export function rateLimit(key: string, limit: number, windowMs: number) {
@@ -28,8 +31,32 @@ export function resetRateLimit(key: string) {
   buckets.delete(key);
 }
 
+/**
+ * Нормализует IP-адрес:
+ * - IPv4 возвращается как есть.
+ * - IPv6 маскируется до подсети /64 (первые 4 блока), что предотвращает
+ *   обход лимитов через перебор адресов внутри выделенного диапазона.
+ */
+export function sourceNetwork(rawIp: string): string {
+  const ip = (rawIp || '').trim().toLowerCase();
+  if (!ip || ip === 'unknown') return 'unknown';
+
+  if (!ip.includes(':')) {
+    // IPv4 address
+    return ip;
+  }
+
+  // Очистка от портов и квадратных скобок: e.g. [2001:db8::1]:8080
+  const clean = ip.replace(/^\[/, '').replace(/\](?::\d+)?$/, '');
+  const parts = clean.split(':');
+  if (parts.length >= 4) {
+    return `${parts.slice(0, 4).join(':')}::/64`;
+  }
+  return `${clean}::/64`;
+}
+
 export function clientIp(req: Request): string {
   const fwd = req.headers.get('x-forwarded-for');
-  if (fwd) return fwd.split(',')[0].trim();
-  return req.headers.get('x-real-ip') || 'unknown';
+  const raw = fwd ? fwd.split(',')[0].trim() : req.headers.get('x-real-ip') || '127.0.0.1';
+  return sourceNetwork(raw);
 }

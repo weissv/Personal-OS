@@ -6,7 +6,7 @@ import { audit } from '@/lib/audit';
 
 export async function POST(req: NextRequest) {
   try {
-    const auth = await authenticate({ roles: [Role.PARENT, Role.ADMIN] });
+    const auth = await authenticate({ roles: [Role.PARENT, Role.ADMIN] }, req);
     if (!auth.ok) return auth.response;
 
     const { user } = auth.ctx;

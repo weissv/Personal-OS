@@ -7,12 +7,24 @@ import { MorningFocusView } from '@/components/MorningFocusView';
 import { EveningDebriefView } from '@/components/EveningDebriefView';
 import { SaturdaySelfStudyView } from '@/components/SaturdaySelfStudyView';
 import { WeeklyRetroView } from '@/components/WeeklyRetroView';
-import { MentorDashboardView } from '@/components/MentorDashboardView';
-import { ParentPortalView } from '@/components/ParentPortalView';
-import { AdminGodmodeView } from '@/components/AdminGodmodeView';
+import dynamic from 'next/dynamic';
 import { MezonCoverView } from '@/components/MezonCoverView';
 import { SprintSpine } from '@/components/SprintSpine';
-import { Loading } from '@/components/ui';
+import { Loading, EmptyState, ErrorBoundary } from '@/components/ui';
+
+// Lazy-load heavy sovereign administrative and mentor views for mobile performance
+const AdminGodmodeView = dynamic(
+  () => import('@/components/AdminGodmodeView').then((m) => m.AdminGodmodeView),
+  { ssr: false, loading: () => <Loading label="Загрузка Godmode…" /> }
+);
+const MentorDashboardView = dynamic(
+  () => import('@/components/MentorDashboardView').then((m) => m.MentorDashboardView),
+  { ssr: false, loading: () => <Loading label="Загрузка кабинета куратора…" /> }
+);
+const ParentPortalView = dynamic(
+  () => import('@/components/ParentPortalView').then((m) => m.ParentPortalView),
+  { ssr: false, loading: () => <Loading label="Загрузка портала доверия…" /> }
+);
 
 interface WeekData {
   id: string;
@@ -358,8 +370,9 @@ export default function Home() {
   const displayName = weekData?.sprint?.student?.fullName || currentUser?.fullName || 'Ученик';
 
   return (
-    <div className="mz-app">
-      <NavigationHeader
+    <ErrorBoundary fallbackTitle="Сбой в рабочей области Sprint OS">
+      <div className="mz-app">
+        <NavigationHeader
         currentView={currentView}
         onViewChange={(v) => {
           setIsCoverOpen(false);
@@ -461,45 +474,18 @@ export default function Home() {
             ) : isLoading && !weekData ? (
               <Loading label="Загружаю спринт Mezon…" />
             ) : !weekData ? (
-              <div
-                style={{
-                  textAlign: 'center',
-                  padding: '60px 24px',
-                  maxWidth: 520,
-                  margin: '40px auto',
-                  background: '#ffffff',
-                  border: '2px solid #222222',
-                  boxShadow: '0 8px 24px rgba(0,0,0,0.06)',
-                }}
-              >
-                <div style={{ fontSize: 44, marginBottom: 12 }}>📋</div>
-                <h2 style={{ fontSize: 20, fontWeight: 800, margin: '0 0 10px 0' }}>
-                  Учебный спринт пока не назначен
-                </h2>
-                <p style={{ color: '#5f5f5f', fontSize: 14, lineHeight: 1.6, margin: '0 0 20px 0' }}>
-                  Здравствуйте, <strong>{currentUser?.fullName}</strong>! Ваша учетная запись активна.
-                  Куратор или администратор школы создаст спринт и привяжет расписание вашей параллели.
-                </p>
-                {isGodmode && (
-                  <button
-                    type="button"
-                    onClick={() => setCurrentView('godmode')}
-                    style={{
-                      background: '#00859e',
-                      color: '#ffffff',
-                      border: 'none',
-                      padding: '12px 24px',
-                      fontWeight: 800,
-                      fontSize: 13,
-                      cursor: 'pointer',
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.5px',
-                    }}
-                  >
-                    Открыть панель управления Godmode
-                  </button>
-                )}
-              </div>
+              <EmptyState
+                icon={<span style={{ fontSize: 44 }}>📋</span>}
+                title="Учебный спринт пока не назначен"
+                description={
+                  <>
+                    Здравствуйте, <strong>{currentUser?.fullName}</strong>! Ваша учетная запись активна.
+                    Куратор или администратор школы создаст спринт и привяжет расписание вашей параллели.
+                  </>
+                }
+                actionText={isGodmode ? 'Открыть панель управления Godmode' : undefined}
+                onAction={isGodmode ? () => setCurrentView('godmode') : undefined}
+              />
             ) : isCoverOpen ? (
               <MezonCoverView
                 studentName={displayName}
@@ -564,17 +550,20 @@ export default function Home() {
                 studentName={displayName}
                 accessLevel={weekData.parentAccessLevel}
                 weekNumber={weekData.weekNumber}
+                weekId={weekData.id}
                 weekGoal={weekData.weekGoal}
                 retroSuccess={weekData.retroSuccess}
                 retroBlockers={weekData.retroBlockers}
                 retroNextPlan={weekData.retroNextPlan}
                 saturdaySlots={saturdayDay?.slots || []}
                 parentComment={weekData.parentReview?.comment}
+                onCommentSubmitted={() => loadSprintAndWeek(selectedWeekNumber)}
               />
             ) : null}
           </div>
         </main>
       </NavigationHeader>
     </div>
-  );
+  </ErrorBoundary>
+);
 }

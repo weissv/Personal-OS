@@ -1,14 +1,15 @@
 'use client';
 
-import React from 'react';
-import { Shield, EyeOff, Eye, Calendar, Heart, Lock } from 'lucide-react';
+import React, { useState } from 'react';
+import { Shield, EyeOff, Eye, Calendar, Heart, Lock, Send, Check, MessageSquare } from 'lucide-react';
 import Image from 'next/image';
-import { ViewHero, Notice } from '@/components/ui';
+import { ViewHero, Notice, InlineAlert } from '@/components/ui';
 
 interface ParentPortalViewProps {
   studentName: string;
   accessLevel: 'REVOKED' | 'SUMMARY_ONLY' | 'FULL_ACCESS';
   weekNumber: number;
+  weekId?: string;
   weekGoal?: string | null;
   retroSuccess?: string | null;
   retroBlockers?: string | null;
@@ -20,25 +21,66 @@ interface ParentPortalViewProps {
     status: string;
   }>;
   parentComment?: string | null;
+  onCommentSubmitted?: () => void;
 }
 
 export const ParentPortalView: React.FC<ParentPortalViewProps> = ({
   studentName,
   accessLevel,
   weekNumber,
+  weekId,
   weekGoal,
   retroSuccess,
   retroBlockers,
   retroNextPlan,
   saturdaySlots,
   parentComment,
+  onCommentSubmitted,
 }) => {
-  const accessLevelLabel =
-    accessLevel === 'REVOKED'
-      ? 'Доступ закрыт (REVOKED)'
-      : accessLevel === 'SUMMARY_ONLY'
-      ? 'Сводка недели (SUMMARY_ONLY)'
-      : 'Полный доступ (FULL_ACCESS)';
+  const [commentText, setCommentText] = useState(parentComment || '');
+  const [isEditing, setIsEditing] = useState(!parentComment);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const handleSubmitComment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!weekId) {
+      setErrorMsg('Не указан идентификатор учебной недели.');
+      return;
+    }
+    const clean = commentText.trim();
+    if (!clean) {
+      setErrorMsg('Пожалуйста, напишите слова поддержки перед отправкой.');
+      return;
+    }
+
+    setIsSubmitting(true);
+    setErrorMsg(null);
+    setSuccessMsg(null);
+
+    try {
+      const res = await fetch('/api/v1/parent/review', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ weekId, comment: clean }),
+      });
+
+      if (res.ok) {
+        setSuccessMsg('Слова поддержки семьи успешно сохранены и переданы ученику.');
+        setIsEditing(false);
+        if (onCommentSubmitted) onCommentSubmitted();
+        setTimeout(() => setSuccessMsg(null), 4000);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setErrorMsg(data.error || 'Не удалось сохранить комментарий. Попробуйте еще раз.');
+      }
+    } catch {
+      setErrorMsg('Сетевая ошибка при отправке комментария поддержки.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   return (
     <div>
@@ -189,18 +231,75 @@ export const ParentPortalView: React.FC<ParentPortalViewProps> = ({
 
           {/* Зона поддержки семьи */}
           <section className="mz-card mz-card--lav mz-card--white">
-            <div className="mz-row" style={{ marginBottom: 'var(--s2)' }}>
-              <span className="mz-chip mz-chip--lav">
-                <Heart size={12} /> Зона поддержки семьи
-              </span>
-              <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--dark)' }}>
-                «Чем могу помочь?»
-              </span>
+            <div className="mz-row mz-row--between" style={{ marginBottom: 'var(--s3)' }}>
+              <div className="mz-row">
+                <span className="mz-chip mz-chip--lav">
+                  <Heart size={12} /> Зона поддержки семьи
+                </span>
+                <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--dark)' }}>
+                  «Чем могу помочь?»
+                </span>
+              </div>
+              {!isEditing && parentComment && (
+                <button
+                  type="button"
+                  className="mz-link"
+                  onClick={() => setIsEditing(true)}
+                  style={{ fontSize: 13, fontWeight: 700 }}
+                >
+                  Изменить
+                </button>
+              )}
             </div>
-            <p style={{ margin: 0, fontSize: 15, color: 'var(--dark)', fontStyle: 'italic', lineHeight: 1.6 }}>
-              {parentComment ||
-                '«Мы гордимся твоим самостоятельным движением и готовы поддержать с материалами для исследовательского проекта на выходных!»'}
-            </p>
+
+            {successMsg && (
+              <div style={{ marginBottom: 'var(--s3)' }}>
+                <Notice icon={<Check size={16} />}>{successMsg}</Notice>
+              </div>
+            )}
+
+            {errorMsg && (
+              <div style={{ marginBottom: 'var(--s3)' }}>
+                <InlineAlert tone="error" onDismiss={() => setErrorMsg(null)}>
+                  {errorMsg}
+                </InlineAlert>
+              </div>
+            )}
+
+            {!isEditing && parentComment ? (
+              <p style={{ margin: 0, fontSize: 15, color: 'var(--dark)', fontStyle: 'italic', lineHeight: 1.6 }}>
+                «{parentComment}»
+              </p>
+            ) : (
+              <form onSubmit={handleSubmitComment} className="mz-stack">
+                <label className="mz-field">
+                  <span className="mz-label">Слова поддержки от родителей на эту неделю</span>
+                  <textarea
+                    rows={3}
+                    required
+                    value={commentText}
+                    onChange={(e) => setCommentText(e.target.value)}
+                    placeholder="«Мы гордимся твоим самостоятельным движением и готовы поддержать с материалами для исследовательского проекта!»"
+                    className="mz-textarea"
+                  />
+                </label>
+                <div className="mz-row mz-row--end">
+                  {parentComment && (
+                    <button type="button" className="mz-link" onClick={() => setIsEditing(false)}>
+                      Отмена
+                    </button>
+                  )}
+                  <button
+                    type="submit"
+                    disabled={isSubmitting}
+                    className="mz-btn mz-btn--primary mz-btn--sm"
+                  >
+                    <Send size={14} />
+                    {isSubmitting ? 'Отправляю…' : 'Подписать слова поддержки'}
+                  </button>
+                </div>
+              </form>
+            )}
           </section>
         </div>
       )}

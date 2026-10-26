@@ -9,7 +9,7 @@ import { rateLimit } from '@/lib/rate-limit';
 /** Смена собственного пароля. Недоступна в режиме имперсонации. */
 export async function POST(req: NextRequest) {
   try {
-    const auth = await authenticate();
+    const auth = await authenticate({}, req);
     if (!auth.ok) return auth.response;
     const { ctx } = auth;
 

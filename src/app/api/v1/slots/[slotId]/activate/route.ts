@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { authenticate, canAccessStudent, denyResponse, notFoundResponse, studentIdForSlot } from '@/lib/auth';
+import { cleanText } from '@/lib/validation';
 
 export async function POST(
   req: NextRequest,
@@ -19,8 +20,6 @@ export async function POST(
     }
 
     const body = await req.json().catch(() => ({}));
-    const { taskGoal, deliverable } = body;
-
     const slot = await prisma.daySlot.findUnique({
       where: { id: slotId },
     });
@@ -29,12 +28,15 @@ export async function POST(
       return notFoundResponse('Слот не найден');
     }
 
+    const taskGoal = body.taskGoal !== undefined ? cleanText(body.taskGoal, 1000) : slot.taskGoal;
+    const deliverable = body.deliverable !== undefined ? cleanText(body.deliverable, 1000) : slot.deliverable;
+
     const updated = await prisma.daySlot.update({
       where: { id: slotId },
       data: {
         isGhost: false,
-        taskGoal: taskGoal || slot.taskGoal,
-        deliverable: deliverable || slot.deliverable,
+        taskGoal,
+        deliverable,
       },
     });
 

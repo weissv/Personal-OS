@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { Role, SlotStatus } from '@prisma/client';
 import { authenticate, handleApiError } from '@/lib/auth';
+import { getCurrentWeekNumber } from '@/lib/sprint';
 
 
 export interface StudentRedFlags {
@@ -125,7 +126,8 @@ export async function GET(req: NextRequest) {
         silentRetroSnippet: silentRetroSnippet || undefined,
       };
 
-      const currentWeek = weeks.find((w) => w.weekNumber === 3) || weeks[weeks.length - 1];
+      const targetWeekNumber = activeSprint ? getCurrentWeekNumber(activeSprint) : 1;
+      const currentWeek = weeks.find((w) => w.weekNumber === targetWeekNumber) || weeks[0];
 
       return {
         student: {

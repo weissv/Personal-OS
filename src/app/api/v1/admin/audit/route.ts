@@ -4,7 +4,7 @@ import { authenticate, handleApiError } from '@/lib/auth';
 
 export async function GET(req: NextRequest) {
   try {
-    const auth = await authenticate({ admin: true });
+    const auth = await authenticate({ admin: true }, req);
     if (!auth.ok) return auth.response;
 
     const { searchParams } = new URL(req.url);

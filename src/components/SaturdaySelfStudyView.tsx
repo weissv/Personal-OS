@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import { Plus, CheckCircle2, Play, Pause, RotateCcw, ChevronUp } from 'lucide-react';
 import Image from 'next/image';
-import { ViewHero } from '@/components/ui';
+import { ViewHero, InlineAlert } from '@/components/ui';
 
 interface DaySlot {
   id: string;
@@ -43,6 +43,7 @@ export const SaturdaySelfStudyView: React.FC<SaturdaySelfStudyViewProps> = ({
   const [projectGoal, setProjectGoal] = useState('');
   const [projectDeliverable, setProjectDeliverable] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   React.useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -62,6 +63,7 @@ export const SaturdaySelfStudyView: React.FC<SaturdaySelfStudyViewProps> = ({
 
   const handleToggleSlotStatus = async (slotId: string, currentStatus: string) => {
     const nextStatus = currentStatus === 'DONE' ? 'PENDING' : 'DONE';
+    setErrorMessage(null);
     try {
       const res = await fetch(`/api/v1/slots/${slotId}/status`, {
         method: 'POST',
@@ -70,27 +72,36 @@ export const SaturdaySelfStudyView: React.FC<SaturdaySelfStudyViewProps> = ({
       });
       if (res.ok) {
         onSlotUpdated();
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setErrorMessage(data.error || 'Не удалось обновить статус слота.');
       }
     } catch (e) {
       console.error(e);
+      setErrorMessage('Сетевая ошибка при изменении статуса проекта.');
     }
   };
 
   const handleCreateSelfStudySlot = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!projectTitle.trim()) return;
+    const title = projectTitle.trim();
+    if (!title || title.length < 3) {
+      setErrorMessage('Название проектного блока должно быть не менее 3 символов.');
+      return;
+    }
     setIsSubmitting(true);
+    setErrorMessage(null);
     try {
       const res = await fetch('/api/v1/slots/custom', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           dayId,
-          title: projectTitle,
+          title,
           startTime: '10:00',
           endTime: durationHours,
-          taskGoal: projectGoal,
-          deliverable: projectDeliverable,
+          taskGoal: projectGoal.trim(),
+          deliverable: projectDeliverable.trim(),
           type: 'SELF_STUDY',
         }),
       });
@@ -100,9 +111,13 @@ export const SaturdaySelfStudyView: React.FC<SaturdaySelfStudyViewProps> = ({
         setProjectTitle('');
         setProjectGoal('');
         setProjectDeliverable('');
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setErrorMessage(data.error || 'Не удалось добавить субботний проект.');
       }
     } catch (err) {
       console.error(err);
+      setErrorMessage('Ошибка сети при добавлении проекта.');
     } finally {
       setIsSubmitting(false);
     }
@@ -133,6 +148,14 @@ export const SaturdaySelfStudyView: React.FC<SaturdaySelfStudyViewProps> = ({
           { value: 90, unit: 'мин', label: 'длина фокус-спринта' },
         ]}
       />
+
+      {errorMessage && (
+        <div style={{ marginBottom: 'var(--s5)' }}>
+          <InlineAlert tone="error" onDismiss={() => setErrorMessage(null)}>
+            {errorMessage}
+          </InlineAlert>
+        </div>
+      )}
 
       {/* Таймер глубокого фокуса: технологичный тёмный блок Mezon */}
       <section className="mz-timer" aria-label="Таймер глубокого фокуса">

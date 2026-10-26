@@ -185,10 +185,22 @@ export async function uploadMediaWithPresignedUrl(params: {
   const fileType = params.fileBlob.type || 'image/webp';
   const fileSize = params.fileBlob.size;
 
+  let token: string | null = null;
+  if (typeof window !== 'undefined') {
+    try {
+      token = localStorage.getItem('mezon_auth_token');
+    } catch {}
+  }
+
+  const presignHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (token) {
+    presignHeaders['Authorization'] = `Bearer ${token}`;
+  }
+
   // 1. Request presigned URL from backend
   const presignRes = await fetch('/api/v1/media/upload-url', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: presignHeaders,
     body: JSON.stringify({
       weekId: params.weekId,
       fileName: params.fileName,
@@ -205,12 +217,21 @@ export async function uploadMediaWithPresignedUrl(params: {
   const presignData = await presignRes.json();
   const { uploadUrl, publicUrl, asset } = presignData;
 
+  const uploadHeaders: Record<string, string> = { 'Content-Type': fileType };
+  if (token) {
+    uploadHeaders['Authorization'] = `Bearer ${token}`;
+  }
+
+  // Append token to uploadUrl if not already present
+  let targetUploadUrl = uploadUrl;
+  if (token && targetUploadUrl.includes('/api/v1/media/upload') && !targetUploadUrl.includes('token=')) {
+    targetUploadUrl += `&token=${encodeURIComponent(token)}`;
+  }
+
   // 2. Direct PUT to S3 / R2 / local endpoint
-  const uploadRes = await fetch(uploadUrl, {
+  const uploadRes = await fetch(targetUploadUrl, {
     method: 'PUT',
-    headers: {
-      'Content-Type': fileType,
-    },
+    headers: uploadHeaders,
     body: params.fileBlob,
   });
 

@@ -52,4 +52,15 @@ public/uploads/
 книги/
 *.pdf
 
+# Sensitive credentials, exports and spreadsheets (Zero-Leak Policy)
+students_credentials.csv
+*.csv
+credentials*.csv
+*.xlsx
+*.xls
+backups/
+*.dump
+*.sql.gz
+
+
 

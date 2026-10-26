@@ -103,23 +103,9 @@ export const NavigationHeader: React.FC<NavigationHeaderProps> = ({
     <>
       {/* Impersonation top strip */}
       {isImpersonating && (
-        <div
-          style={{
-            background: 'linear-gradient(90deg, #a04a84, #873b6d)',
-            color: '#fff',
-            padding: '8px 16px',
-            fontSize: 13,
-            fontWeight: 700,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            flexWrap: 'wrap',
-            gap: 8,
-            zIndex: 100,
-          }}
-        >
+        <div className="mz-impersonate-bar">
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Sparkles size={16} color="#fcd5a6" />
+            <Sparkles size={16} color="var(--peach, #fcd5a6)" />
             <span>
               ⚡ Просмотр от лица <strong>{currentUser?.fullName}</strong> ({ROLE_LABEL[role || ''] || role})
             </span>
@@ -127,17 +113,7 @@ export const NavigationHeader: React.FC<NavigationHeaderProps> = ({
           <button
             type="button"
             onClick={onRevertToAdmin}
-            style={{
-              background: '#fcd5a6',
-              color: '#121212',
-              border: 'none',
-              padding: '4px 12px',
-              fontWeight: 800,
-              fontSize: 12,
-              cursor: 'pointer',
-              textTransform: 'uppercase',
-              letterSpacing: '0.5px',
-            }}
+            className="mz-impersonate-bar__btn"
           >
             ⚡ Вернуться в Godmode
           </button>
@@ -184,19 +160,7 @@ export const NavigationHeader: React.FC<NavigationHeaderProps> = ({
             <button
               type="button"
               onClick={() => onViewChange('godmode')}
-              style={{
-                background: '#a04a84',
-                color: '#fff',
-                border: 'none',
-                padding: '6px 12px',
-                fontSize: 12,
-                fontWeight: 800,
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: 6,
-                letterSpacing: '0.5px',
-              }}
+              className="mz-godmode-btn"
             >
               <Sparkles size={14} />
               <span>⚡ Godmode</span>
@@ -286,19 +250,7 @@ export const NavigationHeader: React.FC<NavigationHeaderProps> = ({
                         setUserMenuOpen(false);
                         if (onLogout) onLogout();
                       }}
-                      style={{
-                        background: 'none',
-                        border: 'none',
-                        color: '#c0392b',
-                        fontWeight: 700,
-                        fontSize: 13,
-                        cursor: 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: 8,
-                        padding: '6px 0',
-                        width: '100%',
-                      }}
+                      className="mz-logout-btn"
                     >
                       <LogOut size={15} />
                       <span>Выйти из аккаунта</span>

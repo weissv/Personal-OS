@@ -1,8 +1,8 @@
 'use client';
 
-import React, { useState } from 'react';
-import { Shield, Eye, EyeOff, AlertTriangle, Award, Send, UserCheck, Check } from 'lucide-react';
-import { ViewHero, Notice } from '@/components/ui';
+import React, { useState, useEffect } from 'react';
+import { Shield, Eye, EyeOff, AlertTriangle, Award, Send, UserCheck, Check, Sparkles } from 'lucide-react';
+import { ViewHero, Notice, InlineAlert } from '@/components/ui';
 
 interface WeeklyRetroViewProps {
   weekId: string;
@@ -92,6 +92,40 @@ export const WeeklyRetroView: React.FC<WeeklyRetroViewProps> = ({
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
+  const [saveErrorMessage, setSaveErrorMessage] = useState<string | null>(null);
+  const [draftRestored, setDraftRestored] = useState(false);
+
+  const DRAFT_KEY = `mezon_retro_draft_${weekId}`;
+
+  // Restore draft from localStorage on mount (Poka-Yoke: zero lost input)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const saved = localStorage.getItem(DRAFT_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && (parsed.retroSuccess || parsed.retroBlockers || parsed.retroNextPlan)) {
+          if (!initialSuccess && parsed.retroSuccess) setRetroSuccess(parsed.retroSuccess);
+          if (!initialBlockers && parsed.retroBlockers) setRetroBlockers(parsed.retroBlockers);
+          if (!initialNextPlan && parsed.retroNextPlan) setRetroNextPlan(parsed.retroNextPlan);
+          setDraftRestored(true);
+        }
+      }
+    } catch {}
+  }, [DRAFT_KEY, initialSuccess, initialBlockers, initialNextPlan]);
+
+  // Auto-save draft on change
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      if (retroSuccess || retroBlockers || retroNextPlan) {
+        localStorage.setItem(
+          DRAFT_KEY,
+          JSON.stringify({ retroSuccess, retroBlockers, retroNextPlan, timestamp: Date.now() })
+        );
+      }
+    } catch {}
+  }, [DRAFT_KEY, retroSuccess, retroBlockers, retroNextPlan]);
 
   // Anti-sabotage validation checks (< 10 chars)
   const isSuccessShort = retroSuccess.trim().length > 0 && retroSuccess.trim().length < 10;
@@ -103,27 +137,36 @@ export const WeeklyRetroView: React.FC<WeeklyRetroViewProps> = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
     setIsSubmitting(true);
     setSaveSuccessMsg(null);
+    setSaveErrorMessage(null);
     try {
       const res = await fetch(`/api/v1/weeks/${weekId}/retro`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          retroSuccess,
-          retroBlockers,
-          retroNextPlan,
+          retroSuccess: retroSuccess.trim(),
+          retroBlockers: retroBlockers.trim(),
+          retroNextPlan: retroNextPlan.trim(),
           parentAccessLevel,
         }),
       });
 
       if (res.ok) {
         setSaveSuccessMsg('Воскресная рефлексия зафиксирована.');
+        try {
+          localStorage.removeItem(DRAFT_KEY);
+        } catch {}
         onRetroSubmitted();
         setTimeout(() => setSaveSuccessMsg(null), 4000);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setSaveErrorMessage(data.error || 'Не удалось сохранить ретроспективу. Проверьте данные и повторите.');
       }
     } catch (err) {
       console.error(err);
+      setSaveErrorMessage('Сетевая ошибка при отправке ретроспективы. Черновик сохранён локально.');
     } finally {
       setIsSubmitting(false);
     }
@@ -170,6 +213,22 @@ export const WeeklyRetroView: React.FC<WeeklyRetroViewProps> = ({
       {saveSuccessMsg && (
         <div style={{ marginBottom: 'var(--s5)' }}>
           <Notice icon={<Check size={18} />}>{saveSuccessMsg}</Notice>
+        </div>
+      )}
+
+      {draftRestored && (
+        <div style={{ marginBottom: 'var(--s5)' }}>
+          <Notice tone="lav" icon={<Sparkles size={18} />}>
+            <strong>Черновик восстановлен.</strong> Ваши незавершённые ответы были восстановлены из локального хранилища (Poka-Yoke).
+          </Notice>
+        </div>
+      )}
+
+      {saveErrorMessage && (
+        <div style={{ marginBottom: 'var(--s5)' }}>
+          <InlineAlert tone="error" onRetry={handleSubmit} onDismiss={() => setSaveErrorMessage(null)}>
+            {saveErrorMessage}
+          </InlineAlert>
         </div>
       )}
 

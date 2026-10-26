@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Plus, Lock, ArrowRight, Check, ChevronDown, ChevronUp } from 'lucide-react';
-import { ViewHero, Notice } from '@/components/ui';
+import { ViewHero, Notice, InlineAlert } from '@/components/ui';
 
 interface DaySlot {
   id: string;
@@ -60,6 +60,7 @@ export const MorningFocusView: React.FC<MorningFocusViewProps> = ({
   const [customGoal, setCustomGoal] = useState('');
   const [customDoD, setCustomDoD] = useState('');
   const [isSubmittingCustom, setIsSubmittingCustom] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -83,22 +84,33 @@ export const MorningFocusView: React.FC<MorningFocusViewProps> = ({
   };
 
   const handleSaveSlotIntention = async (slotId: string) => {
+    const goal = taskGoalInput.trim();
+    if (goal.length > 0 && goal.length < 3) {
+      setActionError('Интенция урока должна содержать не менее 3 символов (Poka-Yoke).');
+      return;
+    }
+
     setIsSaving(true);
+    setActionError(null);
     try {
       const res = await fetch(`/api/v1/slots/${slotId}/activate`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          taskGoal: taskGoalInput,
-          deliverable: deliverableInput,
+          taskGoal: goal,
+          deliverable: deliverableInput.trim(),
         }),
       });
       if (res.ok) {
         onSlotUpdated();
         setActiveSlotId(null);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setActionError(data.error || 'Не удалось сохранить интенцию урока. Повторите попытку.');
       }
     } catch (e) {
       console.error(e);
+      setActionError('Сетевая ошибка при сохранении интенции. Проверьте интернет-соединение.');
     } finally {
       setIsSaving(false);
     }
@@ -108,17 +120,18 @@ export const MorningFocusView: React.FC<MorningFocusViewProps> = ({
     e.preventDefault();
     if (!customTitle.trim()) return;
     setIsSubmittingCustom(true);
+    setActionError(null);
     try {
       const res = await fetch('/api/v1/slots/custom', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           dayId,
-          title: customTitle,
+          title: customTitle.trim(),
           startTime: customStartTime,
           endTime: customEndTime,
-          taskGoal: customGoal,
-          deliverable: customDoD,
+          taskGoal: customGoal.trim(),
+          deliverable: customDoD.trim(),
           type: 'CUSTOM_EVENT',
         }),
       });
@@ -128,9 +141,13 @@ export const MorningFocusView: React.FC<MorningFocusViewProps> = ({
         setCustomTitle('');
         setCustomGoal('');
         setCustomDoD('');
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setActionError(data.error || 'Не удалось создать личное событие.');
       }
     } catch (err) {
       console.error(err);
+      setActionError('Ошибка сети при создании личного события.');
     } finally {
       setIsSubmittingCustom(false);
     }
@@ -259,6 +276,14 @@ export const MorningFocusView: React.FC<MorningFocusViewProps> = ({
             </div>
           </div>
         </form>
+      )}
+
+      {actionError && (
+        <div style={{ marginBottom: 'var(--s4)' }}>
+          <InlineAlert tone="error" onDismiss={() => setActionError(null)}>
+            {actionError}
+          </InlineAlert>
+        </div>
       )}
 
       {/* Слоты: цвет кромки = статус; пунктир = ghost-заготовка из расписания */}

@@ -45,8 +45,9 @@ export async function generatePresignedUploadUrl(params: {
     publicUrl = `${S3_ENDPOINT}/${S3_BUCKET}/${uniqueKey}`;
   } else {
     // Local / development upload endpoint compatible with direct HTTP PUT
-    uploadUrl = `${APP_URL}/api/v1/media/upload?key=${encodeURIComponent(uniqueKey)}`;
-    publicUrl = `${APP_URL}/api/v1/media/files/${encodeURIComponent(uniqueKey)}`;
+    ensureUploadDir();
+    uploadUrl = `/api/v1/media/upload?key=${encodeURIComponent(uniqueKey)}`;
+    publicUrl = `/api/v1/media/files/${uniqueKey}`;
   }
 
   return {

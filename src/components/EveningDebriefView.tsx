@@ -1,9 +1,10 @@
 'use client';
 
 import React, { useState, useRef } from 'react';
-import { CheckCircle2, ArrowRightLeft, XCircle, Camera, Mic, Square, Play, Pause, Upload, Check } from 'lucide-react';
-import { ViewHero, Notice } from '@/components/ui';
+import { CheckCircle2, ArrowRightLeft, XCircle, Camera, Mic, Square, Play, Pause, Upload, Check, Maximize2 } from 'lucide-react';
+import { ViewHero, Notice, InlineAlert } from '@/components/ui';
 import { processImageForUpload, AudioCapturePipeline, uploadMediaWithPresignedUrl } from '@/lib/media-processor';
+import { MediaPreviewModal, getSafeMediaUrl } from './MediaPreviewModal';
 
 interface DaySlot {
   id: string;
@@ -94,6 +95,9 @@ export const EveningDebriefView: React.FC<EveningDebriefViewProps> = ({
   const [mediaNoteInput, setMediaNoteInput] = useState('');
   const [isBatchSyncing, setIsBatchSyncing] = useState(false);
   const [syncSuccessMessage, setSyncSuccessMessage] = useState<string | null>(null);
+  const [syncErrorMessage, setSyncErrorMessage] = useState<string | null>(null);
+  const [selectedMediaAsset, setSelectedMediaAsset] = useState<MediaAsset | null>(null);
+  const [failedImageIds, setFailedImageIds] = useState<Set<string>>(() => new Set());
 
   // Counts
   const totalSlots = slots.length;
@@ -137,6 +141,12 @@ export const EveningDebriefView: React.FC<EveningDebriefViewProps> = ({
     const file = e.target.files?.[0];
     if (!file) return;
 
+    if (file.size > 15 * 1024 * 1024) {
+      setSyncErrorMessage('Файл превышает допустимый размер 15 МБ. Выберите меньший файл.');
+      return;
+    }
+
+    setSyncErrorMessage(null);
     setIsCompressingImage(true);
     try {
       const originalSize = file.size;
@@ -162,6 +172,7 @@ export const EveningDebriefView: React.FC<EveningDebriefViewProps> = ({
       setMediaNoteInput('');
     } catch (err) {
       console.error('Photo upload error:', err);
+      setSyncErrorMessage('Не удалось загрузить фотоконспект. Попробуйте снова.');
     } finally {
       setIsCompressingImage(false);
       setIsUploadingMedia(false);
@@ -222,8 +233,10 @@ export const EveningDebriefView: React.FC<EveningDebriefViewProps> = ({
 
   // Single Transaction API sync
   const handleBatchSync = async () => {
+    if (isBatchSyncing) return;
     setIsBatchSyncing(true);
     setSyncSuccessMessage(null);
+    setSyncErrorMessage(null);
     try {
       const updatedSlots = Object.entries(slotStatusMap).map(([id, val]) => ({
         id,
@@ -245,9 +258,13 @@ export const EveningDebriefView: React.FC<EveningDebriefViewProps> = ({
         setSyncSuccessMessage('Вечерний дебрифинг успешно сохранен в единой транзакции (Single Transaction API)');
         onDebriefCompleted();
         setTimeout(() => setSyncSuccessMessage(null), 4000);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setSyncErrorMessage(data.error || 'Не удалось сохранить статус дня. Попробуйте еще раз.');
       }
     } catch (err) {
       console.error('Batch sync error:', err);
+      setSyncErrorMessage('Сетевой сбой при отправке дебрифинга. Ваши отметки сохранены в интерфейсе — нажмите повторить.');
     } finally {
       setIsBatchSyncing(false);
     }
@@ -282,6 +299,14 @@ export const EveningDebriefView: React.FC<EveningDebriefViewProps> = ({
       {syncSuccessMessage && (
         <div style={{ marginBottom: 'var(--s5)' }}>
           <Notice icon={<Check size={18} />}>{syncSuccessMessage}</Notice>
+        </div>
+      )}
+
+      {syncErrorMessage && (
+        <div style={{ marginBottom: 'var(--s5)' }}>
+          <InlineAlert tone="error" onRetry={handleBatchSync} onDismiss={() => setSyncErrorMessage(null)}>
+            {syncErrorMessage}
+          </InlineAlert>
         </div>
       )}
 
@@ -497,29 +522,76 @@ export const EveningDebriefView: React.FC<EveningDebriefViewProps> = ({
 
           {mediaAssets.length > 0 && (
             <div>
-              <div className="mz-label">Артефакты недели · {mediaAssets.length}</div>
+              <div className="mz-label">Артефакты недели · {mediaAssets.length} (нажмите для просмотра)</div>
               <div className="mz-media">
-                {mediaAssets.map((asset) => (
-                  <div key={asset.id} className="mz-media__item">
-                    <div className="mz-media__thumb">
-                      {asset.fileType.includes('image') ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={asset.fileUrl} alt={asset.fileName} />
-                      ) : (
-                        <Mic size={26} />
-                      )}
-                    </div>
-                    <div className="mz-media__meta">
-                      <b>{asset.note || asset.fileName}</b>
-                      <span>{(asset.fileSize / 1024).toFixed(0)} KB</span>
-                    </div>
-                  </div>
-                ))}
+                {mediaAssets.map((asset) => {
+                  const isImage = asset.fileType.includes('image');
+                  const hasFailed = failedImageIds.has(asset.id);
+                  const safeThumbUrl = getSafeMediaUrl(asset.fileUrl);
+
+                  return (
+                    <button
+                      key={asset.id}
+                      type="button"
+                      className="mz-media__item mz-media__item--clickable"
+                      onClick={() => setSelectedMediaAsset(asset)}
+                      aria-label={`Открыть артефакт: ${asset.note || asset.fileName}`}
+                    >
+                      <div className="mz-media__thumb">
+                        {isImage ? (
+                          hasFailed ? (
+                            <div className="mz-media__thumb-fallback">
+                              <Camera size={22} color="var(--teal)" />
+                              <span>Фотоконспект</span>
+                            </div>
+                          ) : (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                              src={safeThumbUrl}
+                              alt={asset.note || asset.fileName}
+                              onError={() =>
+                                setFailedImageIds((prev) => {
+                                  const next = new Set(prev);
+                                  next.add(asset.id);
+                                  return next;
+                                })
+                              }
+                            />
+                          )
+                        ) : (
+                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 4 }}>
+                            <Mic size={26} color="var(--lav-d)" />
+                            <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--lav-d)', textTransform: 'uppercase' }}>Аудио</span>
+                          </div>
+                        )}
+                        <div className="mz-media__item-overlay" aria-hidden="true">
+                          <Maximize2 size={14} />
+                        </div>
+                      </div>
+                      <div className="mz-media__meta">
+                        <b>{asset.note || asset.fileName}</b>
+                        <span>{(asset.fileSize / 1024).toFixed(0)} KB · Нажмите для просмотра</span>
+                      </div>
+                    </button>
+                  );
+                })}
               </div>
             </div>
           )}
         </div>
       </section>
+
+      {/* Lightbox / Fullscreen Modal */}
+      {selectedMediaAsset && (
+        <MediaPreviewModal
+          asset={selectedMediaAsset}
+          onClose={() => setSelectedMediaAsset(null)}
+          onDeleted={() => {
+            setSelectedMediaAsset(null);
+            onSlotUpdated();
+          }}
+        />
+      )}
 
       {/* Главное действие экрана */}
       <div style={{ marginTop: 'var(--s6)', display: 'flex', flexDirection: 'column', gap: 10 }}>

@@ -6,7 +6,7 @@ import { authenticate } from '@/lib/auth';
 
 export async function PUT(req: NextRequest) {
   try {
-    const auth = await authenticate();
+    const auth = await authenticate({}, req);
     if (!auth.ok) return auth.response;
 
     const url = new URL(req.url);

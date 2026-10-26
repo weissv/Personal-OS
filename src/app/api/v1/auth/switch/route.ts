@@ -11,7 +11,7 @@ import { audit } from '@/lib/audit';
  */
 export async function POST(req: NextRequest) {
   try {
-    const auth = await authenticate({ admin: true });
+    const auth = await authenticate({ admin: true }, req);
     if (!auth.ok) return auth.response;
     const { ctx } = auth;
     const admin = ctx.actor!;

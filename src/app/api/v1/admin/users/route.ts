@@ -11,7 +11,7 @@ import { audit } from '@/lib/audit';
 // GET /api/v1/admin/users
 export async function GET(req: NextRequest) {
   try {
-    const auth = await authenticate({ admin: true });
+    const auth = await authenticate({ admin: true }, req);
     if (!auth.ok) return auth.response;
 
     const { searchParams } = new URL(req.url);
@@ -78,7 +78,7 @@ export async function GET(req: NextRequest) {
 // POST /api/v1/admin/users
 export async function POST(req: NextRequest) {
   try {
-    const auth = await authenticate({ admin: true });
+    const auth = await authenticate({ admin: true }, req);
     if (!auth.ok) return auth.response;
     const admin = auth.ctx.user;
 

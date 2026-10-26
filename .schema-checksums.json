@@ -1,0 +1,9 @@
+{
+  "version": "1.0.0",
+  "generatedAt": "2026-10-27T02:35:00+05:00",
+  "description": "MEZON SPRINT OS - Cryptographic Schema & Invariants Checksum Ledger",
+  "checksums": {
+    "prisma/schema.prisma": "78e215e40c3d21f6b145af0db4439b85242a830b721443e9f1a7638d46bb0094",
+    "prisma/migrations/audit_append_only.sql": "ee33cdeb0ae1a6d27fa816921a4ceb42d3c8e4a2d095a818b8d5ee95962eaa35"
+  }
+}

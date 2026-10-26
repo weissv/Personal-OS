@@ -58,6 +58,13 @@ export async function getSessionContext(tokenOrReq?: string | Request | null): P
       if (authHeader && authHeader.startsWith('Bearer ')) {
         token = authHeader.slice(7).trim();
       }
+      if (!token && 'url' in tokenOrReq && typeof tokenOrReq.url === 'string') {
+        try {
+          const parsedUrl = new URL(tokenOrReq.url);
+          const qToken = parsedUrl.searchParams.get('token');
+          if (qToken) token = qToken.trim();
+        } catch {}
+      }
       if (!token) {
         const rawCookie = tokenOrReq.headers.get('cookie') || '';
         const match = rawCookie.match(/(?:^|;\s*)mezon_session=([^;]+)/);

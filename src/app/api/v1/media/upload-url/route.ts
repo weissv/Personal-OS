@@ -5,7 +5,7 @@ import { authenticate, canAccessStudent, denyResponse, notFoundResponse, student
 
 export async function POST(req: NextRequest) {
   try {
-    const auth = await authenticate();
+    const auth = await authenticate({}, req);
     if (!auth.ok) return auth.response;
 
     const body = await req.json().catch(() => ({}));
