@@ -11,7 +11,7 @@ import {
   RefreshCw,
   Plus,
 } from 'lucide-react';
-import './admin-godmode.css';
+import './admin/admin-godmode.css';
 import { AdminStats, AdminUser, TimetableSlot, AuditLogEntry, TabType } from './admin/types';
 import { AdminAnalyticsTab } from './admin/AdminAnalyticsTab';
 import { AdminUsersTab } from './admin/AdminUsersTab';
