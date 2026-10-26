@@ -117,7 +117,7 @@ export const AdminUsersTab: React.FC<AdminUsersTabProps> = ({
                     )}
                     {u.role === 'PARENT' && (
                       <span className="gm-muted">
-                        {u.students.length > 0 ? `Ученик: ${u.students[0].fullName}` : 'Не привязан'}
+                        {u.students && u.students.length > 0 ? `Ученик: ${u.students[0].fullName}` : 'Не привязан'}
                       </span>
                     )}
                     {u.role === 'MENTOR' && (
@@ -196,7 +196,7 @@ export const AdminUsersTab: React.FC<AdminUsersTabProps> = ({
                     {u.sprintsCount > 0 ? `${u.sprintsCount} спринт` : 'Без спринта'}
                   </span>
                 )}
-                {u.role === 'PARENT' && u.students.length > 0 && (
+                {u.role === 'PARENT' && u.students && u.students.length > 0 && (
                   <span>Ученик: {u.students[0].fullName}</span>
                 )}
               </div>

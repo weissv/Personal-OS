@@ -148,7 +148,7 @@ export const MentorDashboardView: React.FC = () => {
     );
   }
 
-  const filteredStudents = data.students.filter((s) => {
+  const filteredStudents = (data.students || []).filter((s) => {
     if (activeFilter === 'HIGH_MIGRATIONS') return s.flags.highMigrations;
     if (activeFilter === 'EMPTY_SELF_STUDY') return s.flags.emptySelfStudy;
     if (activeFilter === 'SILENT_RETRO') return s.flags.silentRetro;

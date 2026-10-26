@@ -45,7 +45,7 @@ export const AdminGodmodeView: React.FC<AdminGodmodeViewProps> = ({ onSwitchToUs
       const res = await fetch('/api/v1/admin/stats');
       if (res.ok) {
         const json = await res.json();
-        setStats(json);
+        setStats(json?.stats || json);
       }
     } catch (e) {
       console.error('Failed to load admin stats:', e);
