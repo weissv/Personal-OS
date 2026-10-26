@@ -135,8 +135,10 @@ export const WeeklyRetroView: React.FC<WeeklyRetroViewProps> = ({
 
   const filledCount = [retroSuccess, retroBlockers, retroNextPlan].filter((t) => t.trim().length >= MIN_CHARS).length;
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = async (e?: React.FormEvent) => {
+    if (e) {
+      e.preventDefault();
+    }
     if (isSubmitting) return;
     setIsSubmitting(true);
     setSaveSuccessMsg(null);
@@ -226,7 +228,7 @@ export const WeeklyRetroView: React.FC<WeeklyRetroViewProps> = ({
 
       {saveErrorMessage && (
         <div style={{ marginBottom: 'var(--s5)' }}>
-          <InlineAlert tone="error" onRetry={handleSubmit} onDismiss={() => setSaveErrorMessage(null)}>
+          <InlineAlert tone="error" onRetry={() => { handleSubmit(); }} onDismiss={() => setSaveErrorMessage(null)}>
             {saveErrorMessage}
           </InlineAlert>
         </div>
