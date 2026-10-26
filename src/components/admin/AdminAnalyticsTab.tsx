@@ -12,9 +12,9 @@ interface AdminAnalyticsTabProps {
 export const AdminAnalyticsTab: React.FC<AdminAnalyticsTabProps> = ({ stats, onSwitchToUser }) => {
   // Poka-Yoke: Defensive unpacking with zero-value defaults (Zero-Crash Guarantee)
   const rawStats = (stats as any)?.stats || stats || {};
-  const users = rawStats.users || { students: 0, mentors: 0, parents: 0, admins: 0, total: 0 };
-  const sprints = rawStats.sprints || { total: 0, weeksTotal: 0, submittedRetrosTotal: 0 };
-  const slots = rawStats.slots || {
+  const users: AdminStats['users'] = rawStats.users || { students: 0, mentors: 0, parents: 0, admins: 0, total: 0 };
+  const sprints: AdminStats['sprints'] = rawStats.sprints || { total: 0, weeksTotal: 0, submittedRetrosTotal: 0 };
+  const slots: AdminStats['slots'] = rawStats.slots || {
     total: 0,
     done: 0,
     migrated: 0,
@@ -23,8 +23,10 @@ export const AdminAnalyticsTab: React.FC<AdminAnalyticsTabProps> = ({ stats, onS
     completionRate: 0,
     migrationRate: 0,
   };
-  const cohorts = rawStats.cohorts || { grade8: 0, grade9: 0, grade10: 0, grade11: 0 };
-  const atRiskStudents = Array.isArray(rawStats.atRiskStudents) ? rawStats.atRiskStudents : [];
+  const cohorts: AdminStats['cohorts'] = rawStats.cohorts || { grade8: 0, grade9: 0, grade10: 0, grade11: 0 };
+  const atRiskStudents: AdminStats['atRiskStudents'] = Array.isArray(rawStats.atRiskStudents)
+    ? rawStats.atRiskStudents
+    : [];
 
   return (
     <div className="gm-section">
@@ -173,7 +175,7 @@ export const AdminAnalyticsTab: React.FC<AdminAnalyticsTabProps> = ({ stats, onS
             <div className="gm-empty-check">✓ Все ученики стабильно соблюдают субъектный ритм!</div>
           ) : (
             <div className="gm-risk-list">
-              {atRiskStudents.map((st) => (
+              {atRiskStudents.map((st: AdminStats['atRiskStudents'][number]) => (
                 <div key={st.id} className="gm-risk-item">
                   <div>
                     <div className="gm-risk-name">
@@ -181,7 +183,7 @@ export const AdminAnalyticsTab: React.FC<AdminAnalyticsTabProps> = ({ stats, onS
                       <span className="gm-risk-grade">({st.gradeLevel} класс)</span>
                     </div>
                     <div className="gm-flags-row">
-                      {st.flags.map((fl, idx) => (
+                      {(st.flags || []).map((fl: string, idx: number) => (
                         <span key={idx} className="gm-flag-tag">
                           {fl}
                         </span>
