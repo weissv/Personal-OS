@@ -13,7 +13,8 @@ services:
       - NODE_ENV=production
       - PORT=3000
       - DATABASE_URL=postgresql://postgres:${DB_PASSWORD:-password123}@db:5432/mezon_sprint_os?schema=public
-      - JWT_SECRET=${JWT_SECRET:-mezon-super-secret-jwt-token-change-in-prod}
+      # Без секрета сервис не стартует: публичный секрет из репозитория позволял бы подделывать сессии
+      - JWT_SECRET=${JWT_SECRET:?Set JWT_SECRET (openssl rand -hex 32)}
       - NEXT_PUBLIC_APP_URL=${NEXT_PUBLIC_APP_URL:-http://localhost:3000}
       - S3_BUCKET=${S3_BUCKET:-mezon-sprint-media}
       - S3_ENDPOINT=${S3_ENDPOINT:-https://r2.storage.school.mezon}

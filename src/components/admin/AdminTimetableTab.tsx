@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Plus, RefreshCw, Trash2 } from 'lucide-react';
+import { Plus, RefreshCw, Trash2, KeyRound, X } from 'lucide-react';
 import { TimetableSlot } from './types';
 
 const DAY_NAMES: Record<number, string> = {
@@ -10,6 +10,7 @@ const DAY_NAMES: Record<number, string> = {
   3: 'Среда',
   4: 'Четверг',
   5: 'Пятница',
+  6: 'Суббота',
 };
 
 interface AdminTimetableTabProps {
@@ -17,9 +18,15 @@ interface AdminTimetableTabProps {
   timetableGrade: number;
   onGradeChange: (grade: number) => void;
   onOpenAddSlotModal: () => void;
-  onDeleteSlot: (slotId: string) => void;
+  onDeleteSlot: (slot: TimetableSlot) => void;
   onSyncTimetable: () => void;
   isSyncingTimetable: boolean;
+  syncResult: {
+    timetableSlotsCount: number;
+    totalSlotsPopulated: number;
+    createdCurators: Array<{ fullName: string; username: string; temporaryPassword: string }>;
+  } | null;
+  onDismissSyncResult: () => void;
 }
 
 export const AdminTimetableTab: React.FC<AdminTimetableTabProps> = ({
@@ -30,7 +37,12 @@ export const AdminTimetableTab: React.FC<AdminTimetableTabProps> = ({
   onDeleteSlot,
   onSyncTimetable,
   isSyncingTimetable,
+  syncResult,
+  onDismissSyncResult,
 }) => {
+  const hasSaturday = timetableSlots.some((s) => s.dayOfWeek === 6);
+  const days = hasSaturday ? [1, 2, 3, 4, 5, 6] : [1, 2, 3, 4, 5];
+
   return (
     <div className="gm-box">
       <div className="gm-tt-header">
@@ -38,17 +50,19 @@ export const AdminTimetableTab: React.FC<AdminTimetableTabProps> = ({
           <div className="gm-box-subtitle text-teal">Сетка учебного плана школы</div>
           <h2 className="gm-box-title">Шаблон расписания по параллелям</h2>
           <p className="gm-box-desc">
-            Эти уроки служат источником для генерации спринтов новых учеников.
+            Источник «призрачных» уроков для спринтов, которые создаются после изменения. {timetableSlots.length} уроков в{' '}
+            {timetableGrade} классе.
           </p>
         </div>
 
         <div className="gm-tt-controls">
-          <div className="gm-grade-pills">
+          <div className="gm-grade-pills" role="group" aria-label="Параллель">
             {[8, 9, 10, 11].map((g) => (
               <button
                 key={g}
                 type="button"
                 onClick={() => onGradeChange(g)}
+                aria-pressed={timetableGrade === g}
                 className={`gm-grade-pill ${timetableGrade === g ? 'gm-grade-pill--active' : ''}`}
               >
                 {g} класс
@@ -56,11 +70,7 @@ export const AdminTimetableTab: React.FC<AdminTimetableTabProps> = ({
             ))}
           </div>
 
-          <button
-            type="button"
-            onClick={onOpenAddSlotModal}
-            className="gm-btn-add-slot"
-          >
+          <button type="button" onClick={onOpenAddSlotModal} className="gm-btn-add-slot">
             <Plus size={14} />
             <span>Добавить урок</span>
           </button>
@@ -70,8 +80,7 @@ export const AdminTimetableTab: React.FC<AdminTimetableTabProps> = ({
             onClick={onSyncTimetable}
             disabled={isSyncingTimetable}
             className="gm-btn-refresh"
-            style={{ marginLeft: 8 }}
-            title="Синхронизировать сетку 8 и 9 классов из файла MIS"
+            title="Пересобрать шаблоны 8 и 9 классов из файла MIS"
           >
             <RefreshCw size={14} className={isSyncingTimetable ? 'animate-spin' : ''} />
             <span>{isSyncingTimetable ? 'Синхронизация…' : 'Синхронизировать из MIS'}</span>
@@ -79,16 +88,42 @@ export const AdminTimetableTab: React.FC<AdminTimetableTabProps> = ({
         </div>
       </div>
 
-      {/* Timetable days breakdown */}
+      {syncResult && syncResult.createdCurators.length > 0 && (
+        <div className="gm-alert-success gm-credentials" role="status">
+          <KeyRound size={18} />
+          <div>
+            <strong>Созданы кураторы — передайте временные пароли лично.</strong> Они показываются только сейчас.
+            <ul>
+              {syncResult.createdCurators.map((c) => (
+                <li key={c.username}>
+                  {c.fullName}: <code>@{c.username}</code> / <code>{c.temporaryPassword}</code>
+                </li>
+              ))}
+            </ul>
+          </div>
+          <button type="button" onClick={onDismissSyncResult} aria-label="Скрыть пароли" className="gm-credentials__close">
+            <X size={16} />
+          </button>
+        </div>
+      )}
+
+      {timetableSlots.length === 0 && (
+        <div className="gm-hint-note">
+          Для {timetableGrade} класса шаблон пуст. Добавьте уроки вручную — новые ученики этой параллели получат их в спринт.
+        </div>
+      )}
+
       <div className="gm-tt-days">
-        {[1, 2, 3, 4, 5].map((d) => {
+        {days.map((d) => {
           const daySlots = timetableSlots
             .filter((s) => s.dayOfWeek === d)
-            .sort((a, b) => a.orderIndex - b.orderIndex || a.startTime.localeCompare(b.startTime));
+            .sort((a, b) => a.startTime.localeCompare(b.startTime) || a.orderIndex - b.orderIndex);
 
           return (
             <div key={d} className="gm-tt-day">
-              <div className="gm-tt-day-title">{DAY_NAMES[d]}</div>
+              <div className="gm-tt-day-title">
+                {DAY_NAMES[d]} <span className="gm-muted">· {daySlots.length}</span>
+              </div>
               {daySlots.length === 0 ? (
                 <div className="gm-tt-empty">Нет уроков</div>
               ) : (
@@ -103,9 +138,10 @@ export const AdminTimetableTab: React.FC<AdminTimetableTabProps> = ({
                       </div>
                       <button
                         type="button"
-                        onClick={() => onDeleteSlot(s.id)}
+                        onClick={() => onDeleteSlot(s)}
                         className="gm-btn-slot-del"
                         title="Удалить урок"
+                        aria-label={`Удалить урок ${s.title}, ${DAY_NAMES[d]} ${s.startTime}`}
                       >
                         <Trash2 size={12} />
                       </button>

@@ -28,3 +28,13 @@ const DUMMY_HASH = hashPassword(crypto.randomBytes(12).toString('hex'));
 export function burnPasswordCheck(password: string) {
   verifyPassword(password, DUMMY_HASH);
 }
+
+const PASSWORD_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+
+/** Криптостойкий временный пароль без похожих символов (0/O, 1/l/I). */
+export function generatePassword(length = 12): string {
+  const bytes = crypto.randomBytes(length);
+  let out = '';
+  for (let i = 0; i < length; i++) out += PASSWORD_ALPHABET[bytes[i] % PASSWORD_ALPHABET.length];
+  return out;
+}

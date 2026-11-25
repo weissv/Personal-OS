@@ -1,88 +1,45 @@
 import { NextRequest, NextResponse } from 'next/server';
-import fs from 'fs';
-import path from 'path';
+import fs from 'fs/promises';
 import prisma from '@/lib/prisma';
-import { UPLOAD_DIR } from '@/lib/storage';
-import { authenticate, canAccessStudent, denyResponse, notFoundResponse } from '@/lib/auth';
-import { audit } from '@/lib/audit';
+import { resolveUploadPath, storageKeyFromUrl } from '@/lib/storage';
+import { authenticate, canAccessStudent, denyResponse, handleApiError, notFoundResponse } from '@/lib/auth';
+import { audit, auditActor } from '@/lib/audit';
 
-export async function DELETE(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
+export async function DELETE(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const auth = await authenticate({}, req);
     if (!auth.ok) return auth.response;
 
     const { id } = await params;
-    if (!id) {
-      return NextResponse.json({ error: 'Missing asset id' }, { status: 400 });
-    }
-
     const asset = await prisma.mediaAsset.findUnique({
       where: { id },
-      include: {
-        week: {
-          select: {
-            sprint: {
-              select: {
-                studentId: true,
-              },
-            },
-          },
-        },
-      },
+      include: { week: { select: { weekNumber: true, sprint: { select: { studentId: true } } } } },
     });
+    if (!asset) return notFoundResponse('Медиа-артефакт не найден');
 
-    if (!asset) {
-      return notFoundResponse('Медиа-артефакт не найден');
+    if (!(await canAccessStudent(auth.ctx, asset.week.sprint.studentId, 'write'))) return denyResponse();
+
+    // Сначала запись в БД (источник истины), затем — физический файл
+    await prisma.mediaAsset.delete({ where: { id } });
+
+    const key = storageKeyFromUrl(asset.fileUrl);
+    const filePath = key ? resolveUploadPath(key) : null;
+    if (filePath) {
+      await fs.unlink(filePath).catch((err: NodeJS.ErrnoException) => {
+        if (err.code !== 'ENOENT') console.warn('Physical file deletion warning:', err);
+      });
     }
-
-    const studentId = asset.week.sprint.studentId;
-    const canWrite = await canAccessStudent(auth.ctx, studentId, 'write');
-    if (!canWrite) {
-      return denyResponse();
-    }
-
-    // Attempt to remove physical file from disk
-    if (asset.fileUrl && asset.fileUrl.includes('/api/v1/media/files/')) {
-      try {
-        const parts = asset.fileUrl.split('/api/v1/media/files/');
-        const relativeKey = decodeURIComponent(parts[1]).split('?')[0];
-        const safeKey = path.normalize(relativeKey).replace(/^(\.\.[\/\\])+/, '');
-        const filePath = path.resolve(UPLOAD_DIR, safeKey);
-        if (fs.existsSync(filePath)) {
-          fs.unlinkSync(filePath);
-        }
-      } catch (err) {
-        console.warn('Physical file deletion warning:', err);
-      }
-    }
-
-    // Delete database record
-    await prisma.mediaAsset.delete({
-      where: { id },
-    });
 
     await audit({
-      actorId: auth.ctx.user.id,
-      actorName: auth.ctx.user.fullName,
+      ...auditActor(auth.ctx),
       action: 'MEDIA_ASSET_DELETED',
       targetType: 'MEDIA_ASSET',
       targetId: id,
-      details: `Удален артефакт ${asset.fileName} (${(asset.fileSize / 1024).toFixed(0)} KB) недели ${asset.weekId}`,
+      details: `Удалён артефакт «${asset.note || asset.fileName}» (${Math.round(asset.fileSize / 1024)} KB), неделя ${asset.week.weekNumber}`,
     });
 
-    return NextResponse.json({
-      success: true,
-      message: 'Артефакт успешно удален',
-      deletedId: id,
-    });
+    return NextResponse.json({ success: true, message: 'Артефакт удалён', deletedId: id });
   } catch (error) {
-    console.error('Media delete error:', error);
-    return NextResponse.json(
-      { error: 'Failed to delete media asset' },
-      { status: 500 }
-    );
+    return handleApiError('media/assets', error, 'Не удалось удалить артефакт');
   }
 }

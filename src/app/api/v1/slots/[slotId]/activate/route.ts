@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
-import { authenticate, canAccessStudent, denyResponse, notFoundResponse, studentIdForSlot } from '@/lib/auth';
+import { authenticate, canAccessStudent, denyResponse, handleApiError, notFoundResponse, studentIdForSlot } from '@/lib/auth';
 import { cleanText } from '@/lib/validation';
 
 export async function POST(
@@ -28,8 +28,8 @@ export async function POST(
       return notFoundResponse('Слот не найден');
     }
 
-    const taskGoal = body.taskGoal !== undefined ? cleanText(body.taskGoal, 1000) : slot.taskGoal;
-    const deliverable = body.deliverable !== undefined ? cleanText(body.deliverable, 1000) : slot.deliverable;
+    const taskGoal = body.taskGoal !== undefined ? cleanText(body.taskGoal, 1000) || null : slot.taskGoal;
+    const deliverable = body.deliverable !== undefined ? cleanText(body.deliverable, 1000) || null : slot.deliverable;
 
     const updated = await prisma.daySlot.update({
       where: { id: slotId },
@@ -46,7 +46,6 @@ export async function POST(
       message: 'Урок активирован как задача!',
     });
   } catch (error) {
-    console.error('Activate slot error:', error);
-    return NextResponse.json({ error: 'Failed to activate slot' }, { status: 500 });
+    return handleApiError('slots/activate', error, 'Не удалось активировать урок');
   }
 }

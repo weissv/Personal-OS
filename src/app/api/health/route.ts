@@ -1,85 +1,73 @@
-import { NextResponse } from 'next/server';
-import prisma from '@/lib/prisma';
-import fs from 'fs';
+import { connection, NextResponse } from 'next/server';
+import fs from 'fs/promises';
 import path from 'path';
+import prisma from '@/lib/prisma';
 import { UPLOAD_DIR } from '@/lib/storage';
 
+/**
+ * Genchi Genbutsu: проверка реального состояния, а не «всё зелёное».
+ * 200 — сервис работает (БД доступна); 503 — БД недоступна.
+ * Публичный ответ не раскрывает количества пользователей и пути на диске.
+ */
 export async function GET() {
-  const startTime = Date.now();
-  let dbLatencyMs = -1;
-  let invariantsStatus = 'UNKNOWN';
-  let storageWritable = false;
+  await connection(); // всегда выполняется на запросе, никогда не пререндерится
+  const startedAt = Date.now();
 
+  let dbLatencyMs: number | null = null;
+  let databaseOk = false;
   try {
-    // 1. Measure DB query Round-Trip Time
-    const dbPingStart = Date.now();
+    const t = Date.now();
     await prisma.$queryRaw`SELECT 1`;
-    dbLatencyMs = Date.now() - dbPingStart;
+    dbLatencyMs = Date.now() - t;
+    databaseOk = true;
+  } catch (error) {
+    console.error('Health probe: database unavailable', error);
+  }
 
-    // 2. Check Invariant I3 trigger status
+  let auditImmutability: 'ACTIVE_AND_ENFORCED' | 'TRIGGER_ABSENT' | 'UNKNOWN' = 'UNKNOWN';
+  if (databaseOk) {
     try {
-      const triggers: any[] = await prisma.$queryRaw`
-        SELECT tgname FROM pg_trigger WHERE tgname = 'audit_log_immutable';
+      const triggers = await prisma.$queryRaw<Array<{ tgname: string }>>`
+        SELECT tgname FROM pg_trigger WHERE tgname IN ('audit_log_immutable', 'audit_log_no_truncate')
       `;
-      invariantsStatus = triggers.length > 0 ? 'ACTIVE_AND_ENFORCED' : 'TRIGGER_ABSENT';
+      auditImmutability = triggers.length === 2 ? 'ACTIVE_AND_ENFORCED' : 'TRIGGER_ABSENT';
     } catch {
-      invariantsStatus = 'NON_POSTGRES_OR_EMBEDDED';
+      auditImmutability = 'UNKNOWN';
     }
+  }
 
-    // 3. Storage Write Probe (test persistence of uploads volume)
-    try {
-      if (!fs.existsSync(UPLOAD_DIR)) {
-        fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-      }
-      const probeFile = path.join(UPLOAD_DIR, '.health-probe.tmp');
-      fs.writeFileSync(probeFile, String(Date.now()));
-      fs.unlinkSync(probeFile);
-      storageWritable = true;
-    } catch {
-      storageWritable = false;
-    }
+  let storageWritable = false;
+  try {
+    await fs.mkdir(UPLOAD_DIR, { recursive: true });
+    const probe = path.join(UPLOAD_DIR, `.health-${process.pid}.tmp`);
+    await fs.writeFile(probe, String(Date.now()));
+    await fs.unlink(probe);
+    storageWritable = true;
+  } catch {
+    storageWritable = false;
+  }
 
-    // 4. Counts summary
-    const [userCount, sprintCount] = await Promise.all([
-      prisma.user.count(),
-      prisma.sprint.count(),
-    ]);
+  const mem = process.memoryUsage();
+  const degraded = !storageWritable || auditImmutability !== 'ACTIVE_AND_ENFORCED';
 
-    const mem = process.memoryUsage();
-
-    return NextResponse.json({
-      status: 'ok',
+  return NextResponse.json(
+    {
+      status: !databaseOk ? 'error' : degraded ? 'degraded' : 'ok',
       service: 'mezon-sprint-os',
       uptimeSeconds: Math.floor(process.uptime()),
       timestamp: new Date().toISOString(),
       diagnostics: {
-        totalCheckDurationMs: Date.now() - startTime,
-        database: {
-          status: 'CONNECTED',
-          latencyMs: dbLatencyMs,
-          usersTotal: userCount,
-          sprintsTotal: sprintCount,
-          invariantI3_AuditImmutable: invariantsStatus,
-        },
-        storage: {
-          uploadDir: UPLOAD_DIR,
-          writable: storageWritable,
-        },
+        totalCheckDurationMs: Date.now() - startedAt,
+        database: { status: databaseOk ? 'CONNECTED' : 'UNAVAILABLE', latencyMs: dbLatencyMs },
+        invariantI3_AuditImmutable: auditImmutability,
+        storage: { writable: storageWritable },
         process: {
-          heapUsedMb: Math.round((mem.heapUsed / 1024 / 1024) * 100) / 100,
-          rssMb: Math.round((mem.rss / 1024 / 1024) * 100) / 100,
+          heapUsedMb: Math.round((mem.heapUsed / 1024 / 1024) * 10) / 10,
+          rssMb: Math.round((mem.rss / 1024 / 1024) * 10) / 10,
+          node: process.version,
         },
       },
-    });
-  } catch (error) {
-    console.error('Health probe failure:', error);
-    return NextResponse.json(
-      {
-        status: 'error',
-        error: 'System diagnostic failure',
-        timestamp: new Date().toISOString(),
-      },
-      { status: 503 }
-    );
-  }
+    },
+    { status: databaseOk ? 200 : 503, headers: { 'Cache-Control': 'no-store' } }
+  );
 }

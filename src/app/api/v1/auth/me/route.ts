@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getSessionContext, isUserGodmode } from '@/lib/auth';
-import { createSessionToken, getSessionCookieOptions, SESSION_COOKIE } from '@/lib/session';
+import { attachSessionCookie, getSessionContext, isUserGodmode, issueSessionToken } from '@/lib/auth';
 
 export async function GET(req: NextRequest) {
   const ctx = await getSessionContext(req);
@@ -8,10 +7,8 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ user: null, isGodmode: false, isImpersonating: false }, { status: 401 });
   }
 
-  // Продлеваем сессию на 1 год при активном использовании
-  const token = createSessionToken(
-    ctx.realAdmin ? { u: ctx.user.id, a: ctx.realAdmin.id } : { u: ctx.user.id }
-  );
+  // Скользящая сессия: продлеваем на год при активном использовании (и обновляем формат токена)
+  const token = await issueSessionToken(ctx.user.id, ctx.realAdmin?.id);
 
   const response = NextResponse.json({
     user: ctx.user,
@@ -20,8 +17,6 @@ export async function GET(req: NextRequest) {
     realAdmin: ctx.realAdmin ? { id: ctx.realAdmin.id, fullName: ctx.realAdmin.fullName } : null,
     token,
   });
-
-  response.cookies.set(SESSION_COOKIE, token, getSessionCookieOptions());
-  return response;
+  response.headers.set('Cache-Control', 'no-store');
+  return attachSessionCookie(response, token, req);
 }
-

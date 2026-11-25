@@ -1,34 +1,23 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Plus, Lock, ArrowRight, Check, ChevronDown, ChevronUp } from 'lucide-react';
-import { ViewHero, Notice, InlineAlert } from '@/components/ui';
+import { Plus, Lock, ArrowRight, Check, ChevronDown, ChevronUp, CalendarX2 } from 'lucide-react';
+import { ViewHero, Notice, InlineAlert, EmptyState } from '@/components/ui';
+import { apiFetch } from '@/lib/api-client';
+import { formatCountdown, secondsUntilPhoneTurnIn } from '@/lib/school-time';
+import type { DaySlot } from '@/lib/types';
+import { DeleteSlotButton } from './DeleteSlotButton';
 
-interface DaySlot {
-  id: string;
-  dayId: string;
-  startTime: string | null;
-  endTime: string | null;
-  title: string;
-  type: string;
-  isGhost: boolean;
-  taskGoal: string | null;
-  deliverable: string | null;
-  status: string;
-  orderIndex: number;
-}
+const MIN_INTENT = 3;
 
 interface MorningFocusViewProps {
   dayId: string;
   dayTitle: string;
   dateStr: string;
   slots: DaySlot[];
-  weekGoal?: string | null;
   onSlotUpdated: () => void;
   onNavigateToEvening: () => void;
 }
-
-const pad = (n: number) => String(n).padStart(2, '0');
 
 export const MorningFocusView: React.FC<MorningFocusViewProps> = ({
   dayId,
@@ -38,11 +27,8 @@ export const MorningFocusView: React.FC<MorningFocusViewProps> = ({
   onSlotUpdated,
   onNavigateToEvening,
 }) => {
-  // Обратный отсчёт до сдачи телефона в 08:00 (табличные цифры)
-  const [timeLeft, setTimeLeft] = useState<{ minutes: number; seconds: number }>({
-    minutes: 18,
-    seconds: 45,
-  });
+  // Реальный обратный отсчёт до сдачи телефона в 08:00 по Ташкенту
+  const [secondsLeft, setSecondsLeft] = useState(() => secondsUntilPhoneTurnIn());
 
   const [activeSlotId, setActiveSlotId] = useState<string | null>(null);
   const [taskGoalInput, setTaskGoalInput] = useState('');
@@ -63,15 +49,12 @@ export const MorningFocusView: React.FC<MorningFocusViewProps> = ({
   const [actionError, setActionError] = useState<string | null>(null);
 
   useEffect(() => {
-    const timer = setInterval(() => {
-      setTimeLeft((prev) => {
-        if (prev.seconds > 0) return { ...prev, seconds: prev.seconds - 1 };
-        if (prev.minutes > 0) return { minutes: prev.minutes - 1, seconds: 59 };
-        return { minutes: 0, seconds: 0 };
-      });
-    }, 1000);
+    const timer = setInterval(() => setSecondsLeft(secondsUntilPhoneTurnIn()), 1000);
     return () => clearInterval(timer);
   }, []);
+  const isBeforeTurnIn = secondsLeft > 0;
+  // До 07:00 показывать «60 минут до вахты» бессмысленно — показываем время сдачи
+  const countdownLabel = secondsLeft > 3600 ? '08:00' : isBeforeTurnIn ? formatCountdown(secondsLeft) : 'сдан';
 
   const handleSelectSlot = (slot: DaySlot) => {
     if (activeSlotId === slot.id) {
@@ -84,72 +67,62 @@ export const MorningFocusView: React.FC<MorningFocusViewProps> = ({
   };
 
   const handleSaveSlotIntention = async (slotId: string) => {
+    if (isSaving) return;
     const goal = taskGoalInput.trim();
-    if (goal.length > 0 && goal.length < 3) {
-      setActionError('Интенция урока должна содержать не менее 3 символов (Poka-Yoke).');
+    if (goal.length < MIN_INTENT) {
+      setActionError(`Сформулируй интенцию урока — хотя бы ${MIN_INTENT} символа.`);
       return;
     }
 
     setIsSaving(true);
     setActionError(null);
-    try {
-      const res = await fetch(`/api/v1/slots/${slotId}/activate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          taskGoal: goal,
-          deliverable: deliverableInput.trim(),
-        }),
-      });
-      if (res.ok) {
-        onSlotUpdated();
-        setActiveSlotId(null);
-      } else {
-        const data = await res.json().catch(() => ({}));
-        setActionError(data.error || 'Не удалось сохранить интенцию урока. Повторите попытку.');
-      }
-    } catch (e) {
-      console.error(e);
-      setActionError('Сетевая ошибка при сохранении интенции. Проверьте интернет-соединение.');
-    } finally {
-      setIsSaving(false);
+    const res = await apiFetch(`/api/v1/slots/${slotId}/activate`, {
+      method: 'POST',
+      body: { taskGoal: goal, deliverable: deliverableInput.trim() },
+    });
+    setIsSaving(false);
+    if (res.ok) {
+      setActiveSlotId(null);
+      onSlotUpdated();
+    } else {
+      setActionError(res.error);
     }
   };
 
   const handleCreateCustomEvent = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!customTitle.trim()) return;
+    if (isSubmittingCustom) return;
+    if (customTitle.trim().length < MIN_INTENT) {
+      setActionError(`Название события — хотя бы ${MIN_INTENT} символа.`);
+      return;
+    }
+    if (customStartTime && customEndTime && customEndTime <= customStartTime) {
+      setActionError('Событие должно заканчиваться позже, чем начинается.');
+      return;
+    }
     setIsSubmittingCustom(true);
     setActionError(null);
-    try {
-      const res = await fetch('/api/v1/slots/custom', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          dayId,
-          title: customTitle.trim(),
-          startTime: customStartTime,
-          endTime: customEndTime,
-          taskGoal: customGoal.trim(),
-          deliverable: customDoD.trim(),
-          type: 'CUSTOM_EVENT',
-        }),
-      });
-      if (res.ok) {
-        onSlotUpdated();
-        setIsAddingCustomEvent(false);
-        setCustomTitle('');
-        setCustomGoal('');
-        setCustomDoD('');
-      } else {
-        const data = await res.json().catch(() => ({}));
-        setActionError(data.error || 'Не удалось создать личное событие.');
-      }
-    } catch (err) {
-      console.error(err);
-      setActionError('Ошибка сети при создании личного события.');
-    } finally {
-      setIsSubmittingCustom(false);
+    const res = await apiFetch('/api/v1/slots/custom', {
+      method: 'POST',
+      body: {
+        dayId,
+        title: customTitle.trim(),
+        startTime: customStartTime || null,
+        endTime: customEndTime || null,
+        taskGoal: customGoal.trim(),
+        deliverable: customDoD.trim(),
+        type: 'CUSTOM_EVENT',
+      },
+    });
+    setIsSubmittingCustom(false);
+    if (res.ok) {
+      setIsAddingCustomEvent(false);
+      setCustomTitle('');
+      setCustomGoal('');
+      setCustomDoD('');
+      onSlotUpdated();
+    } else {
+      setActionError(res.error);
     }
   };
 
@@ -180,7 +153,10 @@ export const MorningFocusView: React.FC<MorningFocusViewProps> = ({
         }
         mascot="fiz"
         stats={[
-          { value: `${pad(timeLeft.minutes)}:${pad(timeLeft.seconds)}`, label: 'до сдачи телефона' },
+          {
+            value: countdownLabel,
+            label: secondsLeft > 3600 ? 'сдача телефона' : isBeforeTurnIn ? 'до сдачи телефона' : 'телефон на вахте',
+          },
           { value: activeSlotsCount, unit: 'шт.', label: 'активировано' },
           { value: ghostSlotsCount, unit: 'шт.', label: 'ждут активации' },
         ]}
@@ -205,18 +181,19 @@ export const MorningFocusView: React.FC<MorningFocusViewProps> = ({
       </div>
 
       {isAddingCustomEvent && (
-        <form onSubmit={handleCreateCustomEvent} className="mz-panel mz-fade-in" style={{ marginBottom: 'var(--s5)' }}>
+        <form onSubmit={handleCreateCustomEvent} className="mz-panel mz-fade-in mz-gap-b">
           <div className="mz-panel__title">
             <span className="mz-chip mz-chip--magenta">Новое</span>
             Событие дня: перемена, студсовет, факультатив
           </div>
           <div className="mz-stack">
-            <div className="mz-grid2" style={{ gridTemplateColumns: 'minmax(0, 2fr) minmax(0, 1fr)' }}>
+            <div className="mz-grid2 mz-grid2--wide-first">
               <label className="mz-field">
                 <span className="mz-label">Название</span>
                 <input
                   type="text"
                   required
+                  maxLength={150}
                   className="mz-input"
                   value={customTitle}
                   onChange={(e) => setCustomTitle(e.target.value)}
@@ -225,7 +202,7 @@ export const MorningFocusView: React.FC<MorningFocusViewProps> = ({
               </label>
               <div className="mz-field">
                 <span className="mz-label">Время</span>
-                <div className="mz-row" style={{ flexWrap: 'nowrap', gap: 6 }}>
+                <div className="mz-row mz-row--tight">
                   <input
                     type="time"
                     className="mz-input mz-num"
@@ -233,7 +210,7 @@ export const MorningFocusView: React.FC<MorningFocusViewProps> = ({
                     onChange={(e) => setCustomStartTime(e.target.value)}
                     aria-label="Начало"
                   />
-                  <span>–</span>
+                  <span aria-hidden="true">–</span>
                   <input
                     type="time"
                     className="mz-input mz-num"
@@ -279,7 +256,7 @@ export const MorningFocusView: React.FC<MorningFocusViewProps> = ({
       )}
 
       {actionError && (
-        <div style={{ marginBottom: 'var(--s4)' }}>
+        <div className="mz-gap-b">
           <InlineAlert tone="error" onDismiss={() => setActionError(null)}>
             {actionError}
           </InlineAlert>
@@ -287,6 +264,16 @@ export const MorningFocusView: React.FC<MorningFocusViewProps> = ({
       )}
 
       {/* Слоты: цвет кромки = статус; пунктир = ghost-заготовка из расписания */}
+      {slots.length === 0 && (
+        <EmptyState
+          icon={<CalendarX2 size={36} />}
+          title="В этот день уроков нет"
+          description="Добавь личное событие — кружок, студсовет или подготовку — и задай ему результат."
+          actionText="Добавить событие"
+          onAction={() => setIsAddingCustomEvent(true)}
+        />
+      )}
+
       <div className="mz-slots">
         {slots.map((slot) => {
           const isSelected = activeSlotId === slot.id;
@@ -299,21 +286,19 @@ export const MorningFocusView: React.FC<MorningFocusViewProps> = ({
 
           return (
             <div key={slot.id} className={cls}>
-              <div
-                className="mz-slot__time"
-                onClick={() => handleSelectSlot(slot)}
-                style={{ cursor: 'pointer' }}
-              >
-                <b>{slot.startTime || '00:00'}</b>
-                <span>{slot.endTime || '00:00'}</span>
+              <div className="mz-slot__time" onClick={() => handleSelectSlot(slot)} aria-hidden="true">
+                <b>{slot.startTime || '—'}</b>
+                <span>{slot.endTime || ''}</span>
               </div>
 
-              <div onClick={() => handleSelectSlot(slot)} style={{ cursor: 'pointer', minWidth: 0 }}>
+              <div className="mz-slot__main" onClick={() => handleSelectSlot(slot)}>
                 <h3 className="mz-slot__title">
                   {slot.title}
                   {isGhost && <span className="mz-chip mz-chip--outline">Заготовка</span>}
                   {slot.type === 'CUSTOM_EVENT' && <span className="mz-chip mz-chip--lav">Событие</span>}
                   {!isGhost && slot.status === 'DONE' && <span className="mz-chip mz-chip--teal">Готово</span>}
+                  {!isGhost && slot.status === 'MIGRATED' && <span className="mz-chip mz-chip--lav">Перенесено</span>}
+                  {!isGhost && slot.status === 'DROPPED' && <span className="mz-chip mz-chip--error">Отменено</span>}
                 </h3>
                 {slot.taskGoal && <p className="mz-slot__goal">{slot.taskGoal}</p>}
                 {!isGhost && !isSelected && slot.deliverable && (
@@ -330,19 +315,33 @@ export const MorningFocusView: React.FC<MorningFocusViewProps> = ({
                     type="button"
                     className="mz-btn mz-btn--sm mz-btn--primary"
                     onClick={() => handleSelectSlot(slot)}
+                    aria-expanded={isSelected}
+                    aria-label={`Активировать: ${slot.title}`}
                   >
-                    Активировать
+                    {isSelected ? 'Свернуть' : 'Активировать'}
                   </button>
                 ) : (
-                  <button type="button" className="mz-link" onClick={() => handleSelectSlot(slot)}>
-                    {isSelected ? 'Свернуть' : 'Изменить'} {isSelected ? <ChevronUp size={14} style={{ display: 'inline' }} /> : <ChevronDown size={14} style={{ display: 'inline' }} />}
+                  <button
+                    type="button"
+                    className="mz-link"
+                    onClick={() => handleSelectSlot(slot)}
+                    aria-expanded={isSelected}
+                    aria-label={`${isSelected ? 'Свернуть' : 'Изменить'}: ${slot.title}`}
+                  >
+                    {isSelected ? 'Свернуть' : 'Изменить'} {isSelected ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                   </button>
                 )}
               </div>
 
               {/* Редактор на месте (Cooper: ноль модальных окон) */}
               {isSelected && (
-                <div className="mz-slot__editor mz-fade-in">
+                <form
+                  className="mz-slot__editor mz-fade-in"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    handleSaveSlotIntention(slot.id);
+                  }}
+                >
                   <label className="mz-field">
                     <span className="mz-label">
                       Что делаю на уроке <em>интенция</em>
@@ -351,6 +350,7 @@ export const MorningFocusView: React.FC<MorningFocusViewProps> = ({
                       type="text"
                       className="mz-input"
                       value={taskGoalInput}
+                      maxLength={1000}
                       onChange={(e) => setTaskGoalInput(e.target.value)}
                       placeholder="Лабораторная по оптике: собрать установку и сделать замеры"
                       autoFocus
@@ -366,13 +366,14 @@ export const MorningFocusView: React.FC<MorningFocusViewProps> = ({
                         type="text"
                         className="mz-input mz-input--teal"
                         value={deliverableInput}
+                        maxLength={1000}
                         onChange={(e) => setDeliverableInput(e.target.value)}
                         placeholder="Черновик отчёта сдан учителю физики"
                       />
                     </label>
                     <div className="mz-suggest">
                       {dodSuggestions.map((sug) => (
-                        <button key={sug} type="button" onClick={() => setDeliverableInput(sug)}>
+                        <button key={sug} type="button" onClick={() => setDeliverableInput(sug)} aria-pressed={deliverableInput === sug}>
                           + {sug}
                         </button>
                       ))}
@@ -380,19 +381,31 @@ export const MorningFocusView: React.FC<MorningFocusViewProps> = ({
                   </div>
 
                   <div className="mz-row mz-row--end">
+                    {slot.type !== 'ACADEMIC_LESSON' && (
+                      <span className="mz-push-left">
+                        <DeleteSlotButton
+                          slotId={slot.id}
+                          title={slot.title}
+                          onDeleted={() => {
+                            setActiveSlotId(null);
+                            onSlotUpdated();
+                          }}
+                          onError={setActionError}
+                        />
+                      </span>
+                    )}
                     <button type="button" className="mz-link" onClick={() => setActiveSlotId(null)}>
                       Отмена
                     </button>
                     <button
-                      type="button"
+                      type="submit"
                       className="mz-btn mz-btn--primary"
-                      disabled={isSaving}
-                      onClick={() => handleSaveSlotIntention(slot.id)}
+                      disabled={isSaving || taskGoalInput.trim().length < MIN_INTENT}
                     >
                       {isSaving ? 'Сохраняю…' : 'Зафиксировать'}
                     </button>
                   </div>
-                </div>
+                </form>
               )}
             </div>
           );
@@ -400,14 +413,14 @@ export const MorningFocusView: React.FC<MorningFocusViewProps> = ({
       </div>
 
       {/* Главное действие экрана — одно и крупное (Cooper: transient posture) */}
-      <div style={{ marginTop: 'var(--s6)' }}>
+      <div className="mz-gap-t">
         {isDayCommitted ? (
           <div className="mz-panel mz-panel--teal mz-fade-in">
             <Notice icon={<Check size={18} />}>
-              <strong>Интенции зафиксированы.</strong> Смартфон сдан на вахте до 16:30 — в течение дня ты действуешь по своим
-              Definition of Done. Вечером — пакетный дебрифинг.
+              <strong>Интенции зафиксированы ({activeSlotsCount}).</strong> Смартфон сдан на вахте до 16:30 — в течение дня ты
+              действуешь по своим Definition of Done. Вечером — пакетный дебрифинг.
             </Notice>
-            <div className="mz-row" style={{ marginTop: 'var(--s4)' }}>
+            <div className="mz-row mz-gap-t-sm">
               <button type="button" className="mz-btn mz-btn--teal" onClick={onNavigateToEvening}>
                 Перейти к вечеру <ArrowRight size={16} />
               </button>
@@ -417,17 +430,20 @@ export const MorningFocusView: React.FC<MorningFocusViewProps> = ({
             </div>
           </div>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            <button type="button" className="mz-btn mz-btn--primary mz-btn--lg mz-btn--block" onClick={() => setIsDayCommitted(true)}>
-              <Lock size={18} /> Готов сдать смартфон (08:00) <ArrowRight size={18} />
-            </button>
+          <div className="mz-actions-col">
+            {activeSlotsCount === 0 && slots.length > 0 && (
+              <p className="mz-hint">Активируй хотя бы один урок — так вечером будет что сверить с Definition of Done.</p>
+            )}
             <button
               type="button"
-              className="mz-btn mz-btn--outline mz-btn--block"
-              onClick={onNavigateToEvening}
-              style={{ fontSize: 13, color: '#555555' }}
+              className="mz-btn mz-btn--primary mz-btn--lg mz-btn--block"
+              onClick={() => setIsDayCommitted(true)}
+              disabled={activeSlotsCount === 0 && slots.length > 0}
             >
-              Перейти к вечернему дебрифингу (после 13:00) →
+              <Lock size={18} /> Готов сдать смартфон (08:00) <ArrowRight size={18} />
+            </button>
+            <button type="button" className="mz-btn mz-btn--outline mz-btn--block mz-btn--quiet" onClick={onNavigateToEvening}>
+              Перейти к вечернему дебрифингу →
             </button>
           </div>
         )}

@@ -42,3 +42,21 @@ export function validateSlotTransition(current: SlotStatus, next: SlotStatus): T
 
   return { allowed: true };
 }
+
+/**
+ * Путь перехода для пакетного дебрифинга. Ученик может пересмотреть решение
+ * (DONE → MIGRATED): терминальные статусы связаны только через PENDING, поэтому
+ * такой переход раскладывается на два легальных шага [PENDING, next].
+ * Возвращает null, если путь невозможен.
+ */
+export function resolveTransitionPath(current: SlotStatus, next: SlotStatus): SlotStatus[] | null {
+  if (current === next) return [];
+  if (validateSlotTransition(current, next).allowed) return [next];
+  if (
+    validateSlotTransition(current, SlotStatus.PENDING).allowed &&
+    validateSlotTransition(SlotStatus.PENDING, next).allowed
+  ) {
+    return [SlotStatus.PENDING, next];
+  }
+  return null;
+}

@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { SlotType, SlotStatus } from '@prisma/client';
-import { authenticate, canAccessStudent, denyResponse, notFoundResponse, studentIdForDay } from '@/lib/auth';
-import { cleanText, cleanTime, cleanSlotType } from '@/lib/validation';
+import { authenticate, canAccessStudent, denyResponse, handleApiError, notFoundResponse, studentIdForDay } from '@/lib/auth';
+import { cleanText, cleanTime, cleanSlotType, timeToMinutes } from '@/lib/validation';
 
 export async function POST(req: NextRequest) {
   try {
@@ -32,19 +32,28 @@ export async function POST(req: NextRequest) {
       return notFoundResponse('День не найден');
     }
 
-    const targetType = cleanSlotType(type) || (type === 'SELF_STUDY' ? SlotType.SELF_STUDY : SlotType.CUSTOM_EVENT);
+    // Ученик не может «нарисовать» себе урок из расписания: только событие или проектный блок
+    const requested = cleanSlotType(type);
+    const targetType = requested === SlotType.SELF_STUDY ? SlotType.SELF_STUDY : SlotType.CUSTOM_EVENT;
+
+    const start = cleanTime(startTime);
+    const end = cleanTime(endTime);
+    if (start && end && timeToMinutes(end) <= timeToMinutes(start)) {
+      return NextResponse.json({ error: 'Время окончания должно быть позже начала' }, { status: 400 });
+    }
 
     const slot = await prisma.daySlot.create({
       data: {
         dayId,
         title: cleanTitle,
-        startTime: cleanTime(startTime),
-        endTime: cleanTime(endTime),
-        taskGoal: cleanText(taskGoal, 1000),
-        deliverable: cleanText(deliverable, 1000),
+        startTime: start,
+        endTime: end,
+        taskGoal: cleanText(taskGoal, 1000) || null,
+        deliverable: cleanText(deliverable, 1000) || null,
         type: targetType,
         isGhost: false,
         status: SlotStatus.PENDING,
+        orderIndex: 100, // порядок в дне определяется временем; без времени — в конце
       },
     });
 
@@ -53,7 +62,6 @@ export async function POST(req: NextRequest) {
       slot,
     });
   } catch (error) {
-    console.error('Create custom slot error:', error);
-    return NextResponse.json({ error: 'Failed to create slot' }, { status: 500 });
+    return handleApiError('slots/custom', error, 'Не удалось создать событие');
   }
 }

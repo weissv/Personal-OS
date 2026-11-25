@@ -113,7 +113,7 @@ Mezon Sprint OS incorporates core principles from the **Toyota Production System
 
 ### 5.4. Andon (行灯 — Visual Signals for Quality Exceptions)
 - **Mentor Anomaly Detection:**
-  Mentors receive instant visual indicators for students with $>30\%$ migration rates, overdue retrospectives, or inactive sprints.
+  Mentors see red flags for ≥50% migrated tasks, two empty Saturdays in a row and "silent" retros (<10 chars); Godmode additionally flags overdue retrospectives of finished weeks.
 
 ---
 
@@ -122,7 +122,7 @@ Mezon Sprint OS incorporates core principles from the **Toyota Production System
 1. **HMAC-SHA256 Tokenization:**
    Stateless session cookies signed with HMAC-SHA256. Tampered tokens are rejected with constant-time equality comparisons (`crypto.timingSafeEqual`).
 2. **Session Revocation:**
-   Immediate invalidation upon user deactivation (`isActive = false`) or credential update (`tests/test_session_revocation.py`).
+   Immediate invalidation upon user deactivation (`isActive = false`) or password change/reset: every token carries an HMAC fingerprint of the owner's password hash (`p`), re-checked on each request (`src/lib/session.ts`, `tests/unit/session.test.ts`).
 3. **IPv6 Subnet Normalization:**
    Rate limiting masks IPv6 addresses to `/64` CIDR blocks (`src/lib/rate-limit.ts`) to defeat rotational IPv6 botnet brute-forcing.
 4. **Selective Trust Media RBAC:**
@@ -135,17 +135,16 @@ Mezon Sprint OS incorporates core principles from the **Toyota Production System
 ## 7. Design System Drift Ratchet
 
 To prevent CSS entropy and rogue visual elements:
-- An automated ratchet script (`scripts/check_design_drift.py`) scans all active React components and stylesheets.
-- The build fails if unapproved hex codes, rogue inline styles, or non-tokenized CSS values are introduced.
-- Status: **0 drift violations across 52 components (100% token adherence and accessibility)**.
+- An automated ratchet script (`scripts/check-design-drift.js`, `npm run lint:drift`) scans all active React components and stylesheets.
+- It fails if off-palette hex colours are introduced. Layout values live in utility classes (`.mz-gap-*`, `.mz-row--*`) instead of inline styles; inline `style` is reserved for data-driven values (bar widths, zoom).
 
 ---
 
 ## 8. Disaster Recovery & Operations
 
-- **Disaster Recovery Runbook:** [`docs/ops/disaster-recovery.md`](file:///Users/somi/Documents/Projects/Personal-OS/docs/ops/disaster-recovery.md)
-- **Automated Backup Script:** [`scripts/backup-db.sh`](file:///Users/somi/Documents/Projects/Personal-OS/scripts/backup-db.sh) — SHA-256 checksummed, gzip-compressed, 14-day retention cycle.
-- **Automated Restore Script:** [`scripts/restore-db.sh`](file:///Users/somi/Documents/Projects/Personal-OS/scripts/restore-db.sh) — Pre-restore checksum verification, mandatory safety confirmation.
+- **Disaster Recovery Runbook:** [`docs/ops/disaster-recovery.md`](docs/ops/disaster-recovery.md)
+- **Automated Backup Script:** [`scripts/backup-db.sh`](scripts/backup-db.sh) — SHA-256 checksummed, gzip-compressed, 14-day retention cycle.
+- **Automated Restore Script:** [`scripts/restore-db.sh`](scripts/restore-db.sh) — Pre-restore checksum verification, mandatory safety confirmation.
 - **Docker Compose Volume:** `uploads_data:/app/public/uploads` guarantees zero data loss on container recreation.
 
 ---
@@ -153,7 +152,7 @@ To prevent CSS entropy and rogue visual elements:
 ## 9. Frontend Kaizen & Resilient UX Architecture
 
 ### 9.1. Poka-Yoke Client Resiliency
-- **Zero Lost Input:** The Sunday Retrospective (`WeeklyRetroView.tsx`) automatically synchronizes uncommitted reflection drafts to `localStorage` (`mezon_retro_draft_${weekId}`) upon every keystroke, preventing accidental data loss on browser refresh or tab closure.
+- **Zero Lost Input:** The Sunday Retrospective (`WeeklyRetroView.tsx`) keeps a `localStorage` draft (`mezon_retro_draft_${weekId}`) only while answers differ from the last saved version, and clears it after a successful submit.
 - **Idempotent Debouncing:** All mutation triggers (login, slot activation, batch debrief, retro submission, parent review) employ state locks (`isSubmitting`, `isSaving`, `isBatchSyncing`) to eliminate double-click duplicate requests.
 - **Input Boundaries:** Slot intentions and project definitions require $\ge 3$ non-whitespace characters to guard against empty or accidental submissions.
 

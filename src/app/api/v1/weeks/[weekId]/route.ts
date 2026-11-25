@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { ParentAccessLevel, Role } from '@prisma/client';
 import prisma from '@/lib/prisma';
-import { authenticate, canAccessStudent, denyResponse, notFoundResponse } from '@/lib/auth';
+import { authenticate, canAccessStudent, denyResponse, handleApiError, notFoundResponse, parentAccessLevelFor } from '@/lib/auth';
 
 
 const MAX_TEXT = 5000;
-const clip = (v: unknown) => (typeof v === 'string' ? v.slice(0, MAX_TEXT) : undefined);
+/** undefined — поле не меняем; пустая строка — очищаем (null). */
+const clip = (v: unknown, max = MAX_TEXT) => (typeof v === 'string' ? v.trim().slice(0, max) || null : undefined);
 
 export async function GET(
   req: NextRequest,
@@ -34,19 +35,29 @@ export async function GET(
     if (!week) return notFoundResponse('Неделя не найдена');
     if (!(await canAccessStudent(ctx, week.sprint.studentId, 'read'))) return denyResponse();
 
-    const link = await prisma.parentStudentLink.findFirst({
-      where: ctx.user.role === Role.PARENT
-        ? { studentId: week.sprint.studentId, parentId: ctx.user.id }
-        : { studentId: week.sprint.studentId },
-    });
-    const accessLevel = link?.accessLevel ?? ParentAccessLevel.REVOKED;
+    let accessLevel: ParentAccessLevel;
+    if (ctx.user.role === Role.PARENT) {
+      accessLevel = await parentAccessLevelFor(ctx.user.id, week.sprint.studentId);
+    } else {
+      // Для ученика/куратора — уровень, который ученик выдал семье (одинаков для всех родителей)
+      const link = await prisma.parentStudentLink.findFirst({
+        where: { studentId: week.sprint.studentId },
+        orderBy: { createdAt: 'asc' },
+        select: { accessLevel: true },
+      });
+      accessLevel = link?.accessLevel ?? ParentAccessLevel.REVOKED;
+    }
 
     if (ctx.user.role === Role.PARENT && accessLevel === ParentAccessLevel.SUMMARY_ONLY) {
-      // Сводный доступ: скрываем поминутные слоты будней, оставляем субботний проект и ретро
+      // Сводный доступ: цели недели, субботний проект и ретро. Без лога уроков, личных заметок и медиа.
       return NextResponse.json({
         week: {
           ...week,
+          notes: null,
+          ideas: null,
+          sketchesNote: null,
           days: week.days.map((day) => ({ ...day, slots: day.isSelfStudy ? day.slots : [] })),
+          mediaAssets: [],
           parentAccessLevel: accessLevel,
         },
       });
@@ -54,8 +65,7 @@ export async function GET(
 
     return NextResponse.json({ week: { ...week, parentAccessLevel: accessLevel } });
   } catch (error) {
-    console.error('Fetch week error:', error);
-    return NextResponse.json({ error: 'Не удалось загрузить неделю' }, { status: 500 });
+    return handleApiError('weeks/get', error, 'Не удалось загрузить неделю');
   }
 }
 
@@ -76,8 +86,8 @@ export async function PATCH(
     const updated = await prisma.week.update({
       where: { id: weekId },
       data: {
-        ...(clip(body.weekGoal) !== undefined && { weekGoal: clip(body.weekGoal) }),
-        ...(clip(body.deadlinesEvents) !== undefined && { deadlinesEvents: clip(body.deadlinesEvents) }),
+        ...(clip(body.weekGoal) !== undefined && { weekGoal: clip(body.weekGoal, 300) }),
+        ...(clip(body.deadlinesEvents) !== undefined && { deadlinesEvents: clip(body.deadlinesEvents, 300) }),
         ...(clip(body.notes) !== undefined && { notes: clip(body.notes) }),
         ...(clip(body.ideas) !== undefined && { ideas: clip(body.ideas) }),
         ...(clip(body.sketchesNote) !== undefined && { sketchesNote: clip(body.sketchesNote) }),
@@ -85,7 +95,6 @@ export async function PATCH(
     });
     return NextResponse.json({ success: true, week: updated });
   } catch (error) {
-    console.error('Update week error:', error);
-    return NextResponse.json({ error: 'Не удалось сохранить неделю' }, { status: 500 });
+    return handleApiError('weeks/update', error, 'Не удалось сохранить неделю');
   }
 }

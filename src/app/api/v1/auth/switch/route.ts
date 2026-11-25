@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
-import { authenticate, sanitizeUser } from '@/lib/auth';
-import { createSessionToken, SESSION_COOKIE, getSessionCookieOptions } from '@/lib/session';
+import { attachSessionCookie, authenticate, handleApiError, issueSessionToken, sanitizeUser } from '@/lib/auth';
 import { audit } from '@/lib/audit';
 
 /**
@@ -19,10 +18,15 @@ export async function POST(req: NextRequest) {
     const body = await req.json().catch(() => ({}));
 
     if (body.revertToAdmin) {
-      const token = createSessionToken({ u: admin.id });
+      if (ctx.isImpersonating) {
+        await audit({
+          actorId: admin.id, actorName: admin.fullName, action: 'IMPERSONATE_END',
+          targetType: 'USER', targetId: ctx.user.id, targetName: ctx.user.fullName,
+        });
+      }
+      const token = await issueSessionToken(admin.id);
       const response = NextResponse.json({ success: true, user: admin, isGodmode: true, isImpersonating: false, token });
-      response.cookies.set(SESSION_COOKIE, token, getSessionCookieOptions());
-      return response;
+      return attachSessionCookie(response, token, req);
     }
 
     const userId = typeof body.userId === 'string' ? body.userId : '';
@@ -40,7 +44,7 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    const token = createSessionToken(impersonating ? { u: target.id, a: admin.id } : { u: admin.id });
+    const token = await issueSessionToken(impersonating ? target.id : admin.id, impersonating ? admin.id : null);
     const response = NextResponse.json({
       success: true,
       user: sanitizeUser(target),
@@ -48,14 +52,8 @@ export async function POST(req: NextRequest) {
       isImpersonating: impersonating,
       token,
     });
-    response.cookies.set(
-      SESSION_COOKIE,
-      token,
-      getSessionCookieOptions()
-    );
-    return response;
+    return attachSessionCookie(response, token, req);
   } catch (error) {
-    console.error('Impersonation error:', error);
-    return NextResponse.json({ error: 'Внутренняя ошибка сервера' }, { status: 500 });
+    return handleApiError('auth/switch', error);
   }
 }

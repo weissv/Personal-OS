@@ -14,10 +14,10 @@ const crypto = require('crypto');
 
 function generateStrongPassword(prefix = 'Mz') {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%';
+  // Криптостойкий источник случайности (Math.random() для паролей непригоден)
+  const bytes = crypto.randomBytes(10);
   let rand = '';
-  for (let i = 0; i < 7; i++) {
-    rand += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
+  for (const b of bytes) rand += chars[b % chars.length];
   return `${prefix}!${rand}`;
 }
 

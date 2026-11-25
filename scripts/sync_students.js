@@ -16,10 +16,10 @@ const crypto = require('crypto');
 
 function generateSecurePassword(prefix) {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%';
+  // Криптостойкий источник случайности (Math.random() для паролей непригоден)
+  const bytes = crypto.randomBytes(9);
   let rand = '';
-  for (let i = 0; i < 6; i++) {
-    rand += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
+  for (const b of bytes) rand += chars[b % chars.length];
   return `Mz!${prefix.slice(0, 4).toLowerCase()}${rand}`;
 }
 

@@ -10,13 +10,16 @@
     "lint": "eslint",
     "lint:drift": "node scripts/check-design-drift.js",
     "test:drift": "node scripts/check-design-drift.js",
-    "test": "node scripts/run-tests.js",
+    "test": "node --test tests/unit/ && node scripts/run-tests.js",
     "invariants:apply": "node scripts/apply-invariants.js",
     "credentials:generate": "node scripts/generate_credentials.js",
     "postinstall": "prisma generate",
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate deploy",
-    "db:seed": "node prisma/seed.js"
+    "db:seed": "node prisma/seed.js",
+    "test:unit": "node --test tests/unit/",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm run lint && npm run lint:drift && npm test"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1149.0",
@@ -27,7 +30,7 @@
     "clsx": "^2.1.1",
     "embedded-postgres": "^18.4.0-beta.17",
     "lucide-react": "^1.55.0",
-    "next": "16.4.0",
+    "next": "16.4.6",
     "pg": "^8.23.1",
     "prisma": "6.4.1",
     "react": "19.3.0",
@@ -40,8 +43,11 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
-    "eslint-config-next": "16.4.0",
+    "eslint-config-next": "16.4.6",
     "pdf-parse": "^2.4.5",
     "typescript": "^5"
+  },
+  "engines": {
+    "node": ">=22.18"
   }
 }

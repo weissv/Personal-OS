@@ -1,8 +1,11 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { Compass, CheckCircle2, UserCheck, Send, Check, X, AlertTriangle } from 'lucide-react';
-import { ViewHero, Notice, Loading } from '@/components/ui';
+import React, { useCallback, useEffect, useState } from 'react';
+import { CheckCircle2, UserCheck, Send, Check, X, AlertTriangle, Users } from 'lucide-react';
+import { ViewHero, Notice, Loading, InlineAlert, EmptyState } from '@/components/ui';
+import { apiFetch } from '@/lib/api-client';
+import { formatSchoolDateTime } from '@/lib/school-time';
+import type { AppUser } from './NavigationHeader';
 
 interface StudentData {
   student: {
@@ -15,7 +18,8 @@ interface StudentData {
     id: string;
     title: string;
     weeksTotal: number;
-  };
+  } | null;
+  currentWeekNumber: number;
   flags: {
     highMigrations: boolean;
     emptySelfStudy: boolean;
@@ -50,10 +54,36 @@ interface StudentData {
   currentWeekId?: string;
 }
 
-export const MentorDashboardView: React.FC = () => {
+interface DashboardData {
+  className: string;
+  gradeLevel: number | null;
+  canChooseGrade: boolean;
+  studentsCount: number;
+  redFlagsSummary: {
+    highMigrationsCount: number;
+    emptySelfStudyCount: number;
+    silentRetroCount: number;
+  };
+  students: StudentData[];
+}
+
+const GRADE_OPTIONS = [8, 9, 10, 11];
+
+const FILTER_LABEL = {
+  ALL: 'все',
+  HIGH_MIGRATIONS: 'перегрузка',
+  EMPTY_SELF_STUDY: 'пустая суббота',
+  SILENT_RETRO: 'silent retro',
+} as const;
+
+export const MentorDashboardView: React.FC<{ mentor: AppUser }> = ({ mentor }) => {
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [gradeFilter, setGradeFilter] = useState<number | null>(null);
   const [data, setData] = useState<{
     className: string;
+    gradeLevel: number | null;
+    canChooseGrade: boolean;
     studentsCount: number;
     redFlagsSummary: {
       highMigrationsCount: number;
@@ -72,79 +102,79 @@ export const MentorDashboardView: React.FC = () => {
   const [mentorFeedbackText, setMentorFeedbackText] = useState('');
   const [isSubmittingReview, setIsSubmittingReview] = useState(false);
   const [reviewSuccessMessage, setReviewSuccessMessage] = useState<string | null>(null);
+  const [reviewError, setReviewError] = useState<string | null>(null);
 
-  const fetchDashboardData = async () => {
-    try {
-      setLoading(true);
-      const res = await fetch('/api/v1/mentor/dashboard');
-      if (res.ok) {
-        const json = await res.json();
-        setData(json);
-      }
-    } catch (e) {
-      console.error('Failed to load mentor dashboard:', e);
-    } finally {
-      setLoading(false);
+  const fetchDashboardData = useCallback(async (grade: number | null) => {
+    const res = await apiFetch<DashboardData>(`/api/v1/mentor/dashboard${grade ? `?grade=${grade}` : ''}`);
+    if (res.ok && res.data) {
+      const fresh = res.data;
+      setData(fresh);
+      setLoadError(null);
+      // Обновляем открытого в инспекторе ученика свежими данными
+      setSelectedStudent((prev) => (prev ? fresh.students.find((s) => s.student.id === prev.student.id) ?? null : null));
+    } else {
+      setLoadError(res.error);
     }
-  };
-
-  useEffect(() => {
-    fetchDashboardData();
+    setLoading(false);
   }, []);
 
-  const handleOpenReview = (student: StudentData, weekNum: number = 1) => {
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!cancelled) await fetchDashboardData(gradeFilter);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [fetchDashboardData, gradeFilter]);
+
+  const handleOpenReview = (student: StudentData) => {
     setSelectedStudent(student);
-    const targetWeek = student.weeks.find((w) => w.weekNumber === weekNum) || student.weeks[0];
+    const targetWeek = student.weeks.find((w) => w.weekNumber === student.currentWeekNumber) || student.weeks[0] || null;
     setSelectedWeek(targetWeek);
     setMentorFeedbackText(targetWeek?.mentorFeedback || '');
     setReviewSuccessMessage(null);
+    setReviewError(null);
   };
 
   const handleSelectWeek = (week: StudentData['weeks'][0]) => {
     setSelectedWeek(week);
     setMentorFeedbackText(week.mentorFeedback || '');
     setReviewSuccessMessage(null);
+    setReviewError(null);
   };
 
   const handleSignMentorReview = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedWeek || !mentorFeedbackText.trim()) return;
+    if (!selectedWeek || !mentorFeedbackText.trim() || isSubmittingReview) return;
 
     setIsSubmittingReview(true);
-    try {
-      const res = await fetch('/api/v1/mentor/review', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          weekId: selectedWeek.id,
-          feedback: mentorFeedbackText,
-        }),
-      });
-
-      if (res.ok) {
-        setReviewSuccessMessage('Ревью наставника успешно подписано.');
-        await fetchDashboardData();
-        // Update local selectedWeek
-        setSelectedWeek((prev) => (prev ? { ...prev, hasMentorReview: true, mentorFeedback: mentorFeedbackText, signedAt: new Date().toISOString() } : null));
-        setTimeout(() => setReviewSuccessMessage(null), 3500);
-      }
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setIsSubmittingReview(false);
+    setReviewError(null);
+    const res = await apiFetch('/api/v1/mentor/review', {
+      method: 'POST',
+      body: { weekId: selectedWeek.id, feedback: mentorFeedbackText.trim() },
+    });
+    setIsSubmittingReview(false);
+    if (res.ok) {
+      setReviewSuccessMessage('Ревью подписано и видно ученику в его ретроспективе.');
+      setSelectedWeek((prev) =>
+        prev ? { ...prev, hasMentorReview: true, mentorFeedback: mentorFeedbackText.trim(), signedAt: new Date().toISOString() } : null
+      );
+      fetchDashboardData(gradeFilter);
+    } else {
+      setReviewError(res.error);
     }
   };
 
   if (loading) {
-    return <Loading label="Загрузка аналитики 9 класса…" />;
+    return <Loading label={`Загрузка класса${mentor.gradeLevel ? ` · ${mentor.gradeLevel} класс` : ''}…`} />;
   }
 
   if (!data) {
     return (
-      <div className="mz-empty">
-        <h3>Ошибка загрузки данных</h3>
-        <p>Не удалось получить сводку класса. Проверьте соединение с базой данных.</p>
-      </div>
+      <InlineAlert tone="error" title="Не удалось загрузить сводку класса" onRetry={() => fetchDashboardData(gradeFilter)}>
+        {loadError}
+      </InlineAlert>
     );
   }
 
@@ -173,14 +203,41 @@ export const MentorDashboardView: React.FC = () => {
         mascot="adm"
         stats={[
           { value: data.studentsCount, unit: 'чел.', label: 'учеников в классе' },
-          { value: data.redFlagsSummary.highMigrationsCount, label: 'перегрузка (>50%)' },
+          { value: data.redFlagsSummary.highMigrationsCount, label: 'перегрузка (≥50%)' },
           { value: data.redFlagsSummary.emptySelfStudyCount, label: 'пустая суббота' },
           { value: data.redFlagsSummary.silentRetroCount, label: 'silent retro' },
         ]}
       />
 
+      {data.canChooseGrade && (
+        <div className="mz-row mz-gap-b" role="group" aria-label="Параллель">
+          {[null, ...GRADE_OPTIONS].map((g) => (
+            <button
+              key={g ?? 'all'}
+              type="button"
+              className={`mz-btn mz-btn--sm ${gradeFilter === g ? 'mz-btn--primary' : 'mz-btn--light'}`}
+              aria-pressed={gradeFilter === g}
+              onClick={() => {
+                setSelectedStudent(null);
+                setGradeFilter(g);
+              }}
+            >
+              {g ? `${g} класс` : 'Все классы'}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {loadError && (
+        <div className="mz-gap-b">
+          <InlineAlert tone="warn" onRetry={() => fetchDashboardData(gradeFilter)} onDismiss={() => setLoadError(null)}>
+            {loadError}
+          </InlineAlert>
+        </div>
+      )}
+
       {/* Триада индикаторов риска — кликабельные карточки с переворотом цвета (Refactoring UI / Mezon style) */}
-      <div className="mz-grid3" style={{ marginBottom: 'var(--s6)' }}>
+      <div className="mz-grid3 mz-gap-b-lg">
         <button
           type="button"
           className="mz-metric mz-metric--error mz-flip"
@@ -189,7 +246,7 @@ export const MentorDashboardView: React.FC = () => {
         >
           <b className="v">{data.redFlagsSummary.highMigrationsCount}</b>
           <span className="k">🔴 High Migrations</span>
-          <span className="d">&gt;50% задач перенесено — признак системной перегрузки</span>
+          <span className="d">≥50% задач перенесено — признак системной перегрузки</span>
         </button>
 
         <button
@@ -216,15 +273,10 @@ export const MentorDashboardView: React.FC = () => {
       </div>
 
       {activeFilter !== 'ALL' && (
-        <div style={{ marginBottom: 'var(--s4)' }}>
+        <div className="mz-gap-b">
           <Notice tone="warn" icon={<AlertTriangle size={18} />}>
-            Включён фильтр по маркеру риска: <strong>{activeFilter}</strong> ({filteredStudents.length} учеников).{' '}
-            <button
-              type="button"
-              className="mz-link"
-              onClick={() => setActiveFilter('ALL')}
-              style={{ fontWeight: 700, marginLeft: 8 }}
-            >
+            Фильтр: <strong>{FILTER_LABEL[activeFilter]}</strong> · {filteredStudents.length} уч.{' '}
+            <button type="button" className="mz-link mz-link--strong" onClick={() => setActiveFilter('ALL')}>
               Сбросить фильтр
             </button>
           </Notice>
@@ -232,6 +284,13 @@ export const MentorDashboardView: React.FC = () => {
       )}
 
       {/* Cockpit: реестр слева + docked inspector справа (Cooper) */}
+      {data.students.length === 0 ? (
+        <EmptyState
+          icon={<Users size={40} />}
+          title="В этой параллели пока нет учеников"
+          description="Когда администратор зарегистрирует учеников класса, их спринты и маркеры риска появятся здесь."
+        />
+      ) : (
       <div className={`mz-cockpit ${selectedStudent ? 'mz-cockpit--open' : ''}`}>
         <div className="mz-table-wrap">
           <table className="mz-table">
@@ -242,7 +301,7 @@ export const MentorDashboardView: React.FC = () => {
                 <th>Переносы</th>
                 <th>Маркеры риска</th>
                 <th>Ретро</th>
-                <th style={{ textAlign: 'right' }}>Действие</th>
+                <th className="mz-ta-right">Действие</th>
               </tr>
             </thead>
             <tbody>
@@ -285,10 +344,7 @@ export const MentorDashboardView: React.FC = () => {
 
                     {/* Переносы */}
                     <td>
-                      <div
-                        className="mz-cell-num"
-                        style={{ color: row.flags.highMigrations ? 'var(--error)' : undefined }}
-                      >
+                      <div className={`mz-cell-num ${row.flags.highMigrations ? 'mz-text-error' : ''}`}>
                         {row.flags.migrationRate}
                         <small>%</small>
                       </div>
@@ -326,21 +382,36 @@ export const MentorDashboardView: React.FC = () => {
                       </div>
                     </td>
 
-                    {/* Ретро статус */}
+                    {/* Ретро прошлой недели — то, что куратор проверяет сейчас */}
                     <td>
-                      {row.weeks.some((w) => w.isSubmitted) ? (
-                        <span className="mz-chip mz-chip--teal">Сдана</span>
-                      ) : (
-                        <span className="mz-chip mz-chip--peach">В процессе</span>
-                      )}
+                      {(() => {
+                        const submitted = row.weeks.filter((w) => w.isSubmitted).length;
+                        const due = Math.max(0, row.currentWeekNumber - 1);
+                        const prev = row.weeks.find((w) => w.weekNumber === row.currentWeekNumber - 1);
+                        return (
+                          <>
+                            {due === 0 ? (
+                              <span className="mz-chip mz-chip--outline">Неделя 1</span>
+                            ) : prev?.isSubmitted ? (
+                              <span className="mz-chip mz-chip--teal">Сдана</span>
+                            ) : (
+                              <span className="mz-chip mz-chip--peach">Не сдана</span>
+                            )}
+                            <div className="mz-cell-sub">
+                              {submitted} из {row.activeSprint?.weeksTotal ?? row.weeks.length}
+                            </div>
+                          </>
+                        );
+                      })()}
                     </td>
 
                     {/* Действие */}
-                    <td style={{ textAlign: 'right' }}>
+                    <td className="mz-ta-right">
                       <button
                         type="button"
                         className={`mz-btn mz-btn--sm ${isSelected ? 'mz-btn--primary' : 'mz-btn--light'}`}
-                        onClick={() => handleOpenReview(row, 1)}
+                        onClick={() => handleOpenReview(row)}
+                        aria-pressed={isSelected}
                       >
                         {isSelected ? 'Открыто' : 'Ревью'}
                       </button>
@@ -355,22 +426,20 @@ export const MentorDashboardView: React.FC = () => {
         {/* Docked Inspector (Cooper: Contextual Inspector, No Modal Excise) */}
         {selectedStudent && selectedWeek && (
           <aside className="mz-inspector" aria-label="Контекстный инспектор ревью">
-            <div className="mz-row mz-row--between" style={{ marginBottom: 'var(--s4)' }}>
+            <div className="mz-row mz-row--between mz-gap-b">
               <div>
-                <span className="mz-chip mz-chip--magenta" style={{ marginBottom: 4 }}>
+                <span className="mz-chip mz-chip--magenta">
                   <UserCheck size={12} /> Наблюдение
                 </span>
-                <h3 style={{ margin: 0, fontSize: 18, fontWeight: 900, color: 'var(--dark)' }}>
-                  {selectedStudent.student.fullName}
-                </h3>
-                <span className="mz-cell-sub" style={{ marginTop: 2 }}>
-                  {data.className} · Неделя {selectedWeek.weekNumber} из 10
+                <h3 className="mz-inspector__name">{selectedStudent.student.fullName}</h3>
+                <span className="mz-cell-sub">
+                  {selectedStudent.student.gradeLevel ? `${selectedStudent.student.gradeLevel} класс` : data.className} · Неделя{' '}
+                  {selectedWeek.weekNumber} из {selectedStudent.activeSprint?.weeksTotal ?? selectedStudent.weeks.length}
                 </span>
               </div>
               <button
                 type="button"
-                className="mz-link"
-                style={{ fontSize: 18, padding: 4 }}
+                className="mz-icon-btn"
                 aria-label="Закрыть инспектор"
                 onClick={() => setSelectedStudent(null)}
               >
@@ -379,23 +448,29 @@ export const MentorDashboardView: React.FC = () => {
             </div>
 
             {reviewSuccessMessage && (
-              <div style={{ marginBottom: 'var(--s4)' }}>
+              <div className="mz-gap-b">
                 <Notice icon={<Check size={16} />}>{reviewSuccessMessage}</Notice>
+              </div>
+            )}
+            {reviewError && (
+              <div className="mz-gap-b">
+                <InlineAlert onDismiss={() => setReviewError(null)}>{reviewError}</InlineAlert>
               </div>
             )}
 
             {/* Выбор недели спринта */}
-            <div style={{ marginBottom: 'var(--s4)' }}>
-              <div className="mz-label" style={{ marginBottom: 6 }}>
-                Неделя спринта
-              </div>
+            <div className="mz-gap-b">
+              <div className="mz-label">Неделя спринта</div>
               <div className="mz-weekchips" role="group" aria-label="Недели ученика">
                 {selectedStudent.weeks.map((w) => (
                   <button
                     key={w.id}
                     type="button"
-                    className={w.hasMentorReview ? 'signed' : ''}
+                    className={[w.hasMentorReview ? 'signed' : '', w.weekNumber === selectedStudent.currentWeekNumber ? 'now' : '']
+                      .join(' ')
+                      .trim()}
                     aria-pressed={selectedWeek.id === w.id}
+                    aria-label={`Неделя ${w.weekNumber}${w.hasMentorReview ? ', ревью подписано' : ''}${w.isSubmitted ? ', ретро сдано' : ''}`}
                     onClick={() => handleSelectWeek(w)}
                   >
                     W{w.weekNumber} {w.hasMentorReview && '✓'}
@@ -405,9 +480,9 @@ export const MentorDashboardView: React.FC = () => {
             </div>
 
             {/* Воскресная рефлексия ученика (PDCA) */}
-            <div style={{ marginBottom: 'var(--s5)' }}>
-              <div className="mz-label" style={{ marginBottom: 6 }}>
-                Рефлексия ученика (PDCA)
+            <div className="mz-gap-b-lg">
+              <div className="mz-label">
+                Рефлексия ученика (PDCA) {!selectedWeek.isSubmitted && <em>ещё не сдана</em>}
               </div>
               <div className="mz-retro">
                 <div>
@@ -434,6 +509,7 @@ export const MentorDashboardView: React.FC = () => {
                 <textarea
                   rows={4}
                   required
+                  maxLength={4000}
                   value={mentorFeedbackText}
                   onChange={(e) => setMentorFeedbackText(e.target.value)}
                   placeholder="Отличный фокус на Definition of Done в физике. В субботу обрати внимание на декомпозицию…"
@@ -441,11 +517,11 @@ export const MentorDashboardView: React.FC = () => {
                 />
               </label>
 
-              <div className="mz-row mz-row--between" style={{ alignItems: 'center' }}>
-                <div className="mz-cell-sub" style={{ marginTop: 0 }}>
+              <div className="mz-row mz-row--between">
+                <div className="mz-cell-sub mz-cell-sub--flush">
                   {selectedWeek.signedAt ? (
-                    <span style={{ color: 'var(--teal)', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 4 }}>
-                      <CheckCircle2 size={14} /> Подписано {new Date(selectedWeek.signedAt).toLocaleDateString('ru-RU')}
+                    <span className="mz-signed">
+                      <CheckCircle2 size={14} /> Подписано {formatSchoolDateTime(selectedWeek.signedAt, { day: 'numeric', month: 'long' })}
                     </span>
                   ) : (
                     <span>Ожидает подписи</span>
@@ -454,17 +530,18 @@ export const MentorDashboardView: React.FC = () => {
 
                 <button
                   type="submit"
-                  disabled={isSubmittingReview}
+                  disabled={isSubmittingReview || !mentorFeedbackText.trim()}
                   className="mz-btn mz-btn--primary mz-btn--sm"
                 >
                   <Send size={14} />
-                  {isSubmittingReview ? 'Подписание…' : 'Подписать ревью'}
+                  {isSubmittingReview ? 'Подписание…' : selectedWeek.hasMentorReview ? 'Обновить ревью' : 'Подписать ревью'}
                 </button>
               </div>
             </form>
           </aside>
         )}
       </div>
+      )}
     </div>
   );
 };

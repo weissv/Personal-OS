@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { burnPasswordCheck, verifyPassword } from '@/lib/password';
-import { isUserGodmode, sanitizeUser } from '@/lib/auth';
-import { createSessionToken, SESSION_COOKIE, getSessionCookieOptions } from '@/lib/session';
+import { attachSessionCookie, handleApiError, isUserGodmode, issueSessionToken, sanitizeUser } from '@/lib/auth';
 import { clientIp, rateLimit, resetRateLimit } from '@/lib/rate-limit';
 import { audit } from '@/lib/audit';
 
@@ -19,14 +18,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Укажите логин и пароль' }, { status: 400 });
     }
 
-    // Защита от перебора: по IP+логину и по IP в целом
+    // Защита от перебора: по IP+логину, по IP в целом и по аккаунту с любых адресов
+    // (последнее не обходится ротацией IP / подделкой X-Forwarded-For).
     const ip = clientIp(req);
     const perLogin = `login:${ip}:${login}`;
-    const perIp = `login-ip:${ip}`;
-    const a = rateLimit(perLogin, 5, WINDOW_MS);
-    const b = rateLimit(perIp, 30, WINDOW_MS);
-    if (!a.allowed || !b.allowed) {
-      const wait = Math.max(a.retryAfterSeconds, b.retryAfterSeconds);
+    const limits = [
+      rateLimit(perLogin, 5, WINDOW_MS),
+      rateLimit(`login-ip:${ip}`, 30, WINDOW_MS),
+      rateLimit(`login-acct:${login}`, 20, WINDOW_MS),
+    ];
+    if (limits.some((l) => !l.allowed)) {
+      const wait = Math.max(...limits.map((l) => l.retryAfterSeconds));
       return NextResponse.json(
         { error: `Слишком много попыток входа. Повторите через ${Math.ceil(wait / 60)} мин.` },
         { status: 429, headers: { 'Retry-After': String(wait) } }
@@ -55,17 +57,15 @@ export async function POST(req: NextRequest) {
     await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
     await audit({ actorId: user.id, actorName: user.fullName, action: 'LOGIN', targetType: 'USER', targetId: user.id, details: `ip=${ip}` });
 
-    const token = createSessionToken({ u: user.id });
+    const token = await issueSessionToken(user.id);
     const response = NextResponse.json({
       success: true,
       user: sanitizeUser(user),
       isGodmode: isUserGodmode(user),
       token,
     });
-    response.cookies.set(SESSION_COOKIE, token, getSessionCookieOptions());
-    return response;
+    return attachSessionCookie(response, token, req);
   } catch (error) {
-    console.error('Login error:', error);
-    return NextResponse.json({ error: 'Внутренняя ошибка сервера при входе' }, { status: 500 });
+    return handleApiError('auth/login', error, 'Внутренняя ошибка сервера при входе');
   }
 }

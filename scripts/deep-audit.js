@@ -1,4 +1,4 @@
-const { PrismaClient, Role, SlotType, SlotStatus, ParentAccessLevel } = require('@prisma/client');
+const { PrismaClient, Role, SlotType, SlotStatus } = require('@prisma/client');
 const prisma = new PrismaClient();
 
 async function runComprehensiveAudit() {
@@ -60,7 +60,6 @@ async function runComprehensiveAudit() {
   console.log(`Total Weeks: ${davronSprint.weeks.length}`);
   for (const w of davronSprint.weeks) {
     const saturday = w.days.find((d) => d.dayOfWeek === 6);
-    const sunday = w.days.find((d) => d.dayOfWeek === 7);
     console.log(
       `  Week ${w.weekNumber}: Days: ${w.days.length} | Submitted: ${w.isSubmitted} | Goal: "${w.weekGoal?.substring(0, 30)}..." | Sat self-study flag: ${saturday?.isSelfStudy}`
     );

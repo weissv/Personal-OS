@@ -1,6 +1,9 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
+import { apiFetch, mediaUrl } from '@/lib/api-client';
+import { formatSchoolDateTime } from '@/lib/school-time';
+import type { MediaAsset } from '@/lib/types';
 import {
   X,
   Download,
@@ -9,7 +12,6 @@ import {
   ZoomIn,
   ZoomOut,
   RotateCcw,
-  Maximize2,
   Play,
   Pause,
   Volume2,
@@ -19,15 +21,7 @@ import {
   Loader2,
 } from 'lucide-react';
 
-export interface MediaAsset {
-  id: string;
-  fileUrl: string;
-  fileType: string;
-  fileName: string;
-  fileSize: number;
-  note: string | null;
-  createdAt: string;
-}
+export type { MediaAsset };
 
 interface MediaPreviewModalProps {
   asset: MediaAsset;
@@ -36,29 +30,8 @@ interface MediaPreviewModalProps {
   canDelete?: boolean;
 }
 
-/**
- * Normalizes media URL by stripping obsolete host prefixes and attaching auth token
- */
-export function getSafeMediaUrl(rawUrl: string, download = false): string {
-  if (!rawUrl) return '';
-  // Strip hardcoded localhost:3000 or absolute prefixes for local relative serving
-  let clean = rawUrl.replace(/^https?:\/\/[^\/]+/, '');
-  if (!clean.startsWith('/')) clean = `/${clean}`;
-
-  let token: string | null = null;
-  if (typeof window !== 'undefined') {
-    try {
-      token = localStorage.getItem('mezon_auth_token');
-    } catch {}
-  }
-
-  const queryParams = new URLSearchParams();
-  if (token) queryParams.set('token', token);
-  if (download) queryParams.set('download', 'true');
-
-  const qs = queryParams.toString();
-  return qs ? `${clean}?${qs}` : clean;
-}
+/** @deprecated используйте mediaUrl из '@/lib/api-client' */
+export const getSafeMediaUrl = mediaUrl;
 
 export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
   asset,
@@ -66,8 +39,9 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
   onDeleted,
   canDelete = true,
 }) => {
-  const isImage = asset.fileType.includes('image');
-  const isAudio = asset.fileType.includes('audio');
+  const isImage = asset.fileType.startsWith('image');
+  const isAudio = asset.fileType.startsWith('audio');
+  const closeBtnRef = useRef<HTMLButtonElement>(null);
 
   // Zoom state for images
   const [zoomLevel, setZoomLevel] = useState(1);
@@ -83,18 +57,24 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
   const [duration, setDuration] = useState(0);
   const [isMuted, setIsMuted] = useState(false);
 
-  const safeUrl = getSafeMediaUrl(asset.fileUrl);
-  const downloadUrl = getSafeMediaUrl(asset.fileUrl, true);
+  const safeUrl = mediaUrl(asset.fileUrl);
+  const downloadUrl = mediaUrl(asset.fileUrl, true);
 
-  // Close on Escape key
+  // Esc закрывает; фокус — на кнопку закрытия; фон не прокручивается; фокус возвращается назад
   useEffect(() => {
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    closeBtnRef.current?.focus();
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        onClose();
-      }
+      if (e.key === 'Escape') onClose();
     };
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      document.body.style.overflow = prevOverflow;
+      previouslyFocused?.focus?.();
+    };
   }, [onClose]);
 
   // Audio progress tracker
@@ -123,8 +103,10 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
       audioRef.current.pause();
       setIsPlaying(false);
     } else {
-      audioRef.current.play();
-      setIsPlaying(true);
+      audioRef.current
+        .play()
+        .then(() => setIsPlaying(true))
+        .catch(() => setIsPlaying(false));
     }
   };
 
@@ -152,45 +134,20 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
   const handleDelete = async () => {
     setIsDeleting(true);
     setDeleteError(null);
-    try {
-      let token: string | null = null;
-      if (typeof window !== 'undefined') {
-        try {
-          token = localStorage.getItem('mezon_auth_token');
-        } catch {}
-      }
-
-      const headers: Record<string, string> = {};
-      if (token) headers['Authorization'] = `Bearer ${token}`;
-
-      const res = await fetch(`/api/v1/media/assets/${asset.id}`, {
-        method: 'DELETE',
-        headers,
-      });
-
-      if (res.ok) {
-        if (onDeleted) onDeleted(asset.id);
-        onClose();
-      } else {
-        const data = await res.json().catch(() => ({}));
-        setDeleteError(data.error || 'Не удалось удалить артефакт');
-      }
-    } catch {
-      setDeleteError('Сетевая ошибка при удалении артефакта');
-    } finally {
-      setIsDeleting(false);
+    const res = await apiFetch(`/api/v1/media/assets/${asset.id}`, { method: 'DELETE' });
+    setIsDeleting(false);
+    if (res.ok) {
+      onDeleted?.(asset.id);
+      onClose();
+    } else {
+      setDeleteError(res.error);
     }
   };
 
-  const formattedDate = new Date(asset.createdAt).toLocaleString('ru-RU', {
-    day: 'numeric',
-    month: 'long',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+  const formattedDate = formatSchoolDateTime(asset.createdAt);
 
   return (
-    <div className="mz-lightbox" role="dialog" aria-modal="true" aria-label="Просмотр артефакта">
+    <div className="mz-lightbox" role="dialog" aria-modal="true" aria-label={`Просмотр артефакта: ${asset.note || asset.fileName}`}>
       <div className="mz-lightbox__backdrop" onClick={onClose} aria-hidden="true" />
 
       <div className="mz-lightbox__dialog mz-fade-in">
@@ -243,6 +200,7 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
             )}
 
             <button
+              ref={closeBtnRef}
               type="button"
               className="mz-lightbox__close-btn"
               onClick={onClose}
@@ -260,7 +218,7 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
             <div className="mz-lightbox__image-wrap">
               {imageError ? (
                 <div className="mz-lightbox__image-fallback">
-                  <AlertTriangle size={36} color="var(--error)" />
+                  <AlertTriangle size={36} className="mz-text-error" />
                   <h4>Изображение недоступно на сервере</h4>
                   <p>
                     Файл не найден по пути хранилища. Возможно, произошёл сбой сети при первоначальной загрузке.
@@ -326,7 +284,7 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
             </div>
           ) : (
             <div className="mz-lightbox__generic-wrap">
-              <FileText size={48} color="var(--lav-d)" />
+              <FileText size={48} className="mz-text-lav" />
               <p>{asset.fileName}</p>
             </div>
           )}
@@ -335,9 +293,9 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
         {/* Delete Confirmation Alert */}
         {confirmDelete && (
           <div className="mz-lightbox__delete-alert mz-fade-in">
-            <AlertTriangle size={18} color="var(--error)" />
+            <AlertTriangle size={18} className="mz-text-error" />
             <span>Удалить этот артефакт из дневника недели? Действие необратимо.</span>
-            <div className="mz-row" style={{ gap: 8 }}>
+            <div className="mz-row mz-row--tight">
               <button
                 type="button"
                 className="mz-btn mz-btn--sm mz-btn--error"
@@ -360,8 +318,8 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
         )}
 
         {deleteError && (
-          <div className="mz-alert mz-alert--error" style={{ margin: '8px 16px' }}>
-            <span>{deleteError}</span>
+          <div className="mz-lightbox__error" role="alert">
+            {deleteError}
           </div>
         )}
 
@@ -370,7 +328,7 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
           <div className="mz-lightbox__meta">
             <span className="mz-lightbox__date">{formattedDate}</span>
             <span className="mz-lightbox__dot">·</span>
-            <span className="mz-num">{(asset.fileSize / 1024).toFixed(0)} KB</span>
+            <span className="mz-num">{Math.max(1, Math.round(asset.fileSize / 1024))} KB</span>
             <span className="mz-lightbox__dot">·</span>
             <span>{asset.fileType}</span>
           </div>
@@ -400,10 +358,9 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
             {canDelete && !confirmDelete && (
               <button
                 type="button"
-                className="mz-btn mz-btn--sm mz-btn--outline"
+                className="mz-btn mz-btn--sm mz-btn--outline mz-btn--danger"
                 onClick={() => setConfirmDelete(true)}
                 title="Удалить артефакт"
-                style={{ borderColor: 'var(--error)', color: 'var(--error)' }}
               >
                 <Trash2 size={14} />
                 <span>Удалить</span>

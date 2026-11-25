@@ -1,8 +1,11 @@
 'use client';
 
 import React, { useState } from 'react';
-import { X } from 'lucide-react';
+import { KeyRound, Wand2, Copy, Check } from 'lucide-react';
 import { AdminUser } from './types';
+import { Dialog, InlineAlert } from '../ui';
+import { apiFetch } from '@/lib/api-client';
+import { generateClientPassword } from './password-gen';
 
 interface PasswordResetModalProps {
   user: AdminUser;
@@ -10,96 +13,97 @@ interface PasswordResetModalProps {
   onSuccess: () => void;
 }
 
-export const PasswordResetModal: React.FC<PasswordResetModalProps> = ({
-  user,
-  onClose,
-  onSuccess,
-}) => {
+export const PasswordResetModal: React.FC<PasswordResetModalProps> = ({ user, onClose, onSuccess }) => {
   const [newPassword, setNewPassword] = useState('');
-  const [status, setStatus] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+  const [copied, setCopied] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newPassword || newPassword.length < 8) {
-      setStatus('Пароль должен содержать не менее 8 символов');
+    if (isSubmitting) return;
+    if (newPassword.length < 8) {
+      setError('Пароль должен содержать не менее 8 символов');
       return;
     }
-
     setIsSubmitting(true);
-    setStatus(null);
+    setError(null);
+    const res = await apiFetch(`/api/v1/admin/users/${user.id}`, { method: 'PATCH', body: { password: newPassword } });
+    setIsSubmitting(false);
+    if (res.ok) {
+      setSaved(true);
+      onSuccess();
+    } else {
+      setError(res.error);
+    }
+  };
 
+  const copy = async () => {
     try {
-      const res = await fetch(`/api/v1/admin/users/${user.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: newPassword }),
-      });
-
-      const json = await res.json();
-      if (res.ok) {
-        setStatus('Пароль успешно обновлён!');
-        setTimeout(() => {
-          onSuccess();
-          onClose();
-        }, 800);
-      } else {
-        setStatus(json.error || 'Ошибка при смене пароля');
-      }
+      await navigator.clipboard.writeText(newPassword);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
     } catch {
-      setStatus('Ошибка подключения к серверу');
-    } finally {
-      setIsSubmitting(false);
+      // буфер обмена недоступен — пароль виден на экране
     }
   };
 
   return (
-    <div className="gm-modal-overlay">
-      <div className="gm-modal">
-        <div className="gm-modal-head">
-          <h3 className="gm-modal-title">Сброс пароля</h3>
-          <button type="button" onClick={onClose} className="gm-modal-close">
-            <X size={18} />
-          </button>
-        </div>
-
-        <form onSubmit={handleSubmit}>
-          <p className="gm-modal-desc">
-            Установите новый пароль для <strong>{user.fullName}</strong> (@
-            {user.username}):
+    <Dialog title="Сброс пароля" icon={<KeyRound size={18} />} onClose={onClose} busy={isSubmitting}>
+      {saved ? (
+        <div className="mz-stack">
+          <p className="mz-dialog__text">
+            Новый пароль для <strong>{user.fullName}</strong> (@{user.username}) сохранён. Все прежние сессии пользователя
+            завершены. Передайте пароль лично:
           </p>
-
-          <div className="gm-form-group">
+          <div className="gm-secret">
+            <code>{newPassword}</code>
+            <button type="button" className="mz-icon-btn" onClick={copy} aria-label="Скопировать пароль">
+              {copied ? <Check size={16} /> : <Copy size={16} />}
+            </button>
+          </div>
+          <div className="mz-row mz-row--end">
+            <button type="button" className="mz-btn mz-btn--primary" onClick={onClose}>
+              Готово
+            </button>
+          </div>
+        </div>
+      ) : (
+        <form onSubmit={handleSubmit} className="mz-stack" noValidate>
+          <p className="mz-dialog__text">
+            Новый пароль для <strong>{user.fullName}</strong> (@{user.username}). Текущие сессии пользователя будут завершены.
+          </p>
+          {error && <InlineAlert onDismiss={() => setError(null)}>{error}</InlineAlert>}
+          <div className="mz-row mz-row--nowrap">
             <input
               type="text"
               required
-              placeholder="Новый пароль (от 8 символов)"
+              minLength={8}
+              maxLength={128}
+              placeholder="Не менее 8 символов"
               value={newPassword}
               onChange={(e) => setNewPassword(e.target.value)}
-              className="gm-input"
+              className="mz-input mz-num"
+              autoComplete="new-password"
+              spellCheck={false}
+              aria-label="Новый пароль"
               autoFocus
             />
+            <button type="button" className="mz-btn mz-btn--light mz-btn--sm" onClick={() => setNewPassword(generateClientPassword())}>
+              <Wand2 size={14} /> Сгенерировать
+            </button>
           </div>
-
-          {status && (
-            <div
-              className={`gm-alert-${status.includes('успешно') ? 'success' : 'danger'}`}
-              style={{ marginBottom: 14 }}
-            >
-              {status}
-            </div>
-          )}
-
-          <div className="gm-modal-footer">
-            <button type="button" onClick={onClose} className="gm-btn-cancel">
+          <div className="mz-row mz-row--end">
+            <button type="button" onClick={onClose} className="mz-link">
               Отмена
             </button>
-            <button type="submit" disabled={isSubmitting} className="gm-btn-save">
+            <button type="submit" disabled={isSubmitting || newPassword.length < 8} className="mz-btn mz-btn--primary">
               {isSubmitting ? 'Сохранение…' : 'Сохранить пароль'}
             </button>
           </div>
         </form>
-      </div>
-    </div>
+      )}
+    </Dialog>
   );
 };

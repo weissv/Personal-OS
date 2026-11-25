@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { Role } from '@prisma/client';
-import { authenticate, canAccessStudent, denyResponse, notFoundResponse, studentIdForWeek } from '@/lib/auth';
-import { audit } from '@/lib/audit';
+import { authenticate, canAccessStudent, denyResponse, handleApiError, notFoundResponse, studentIdForWeek } from '@/lib/auth';
+import { audit, auditActor } from '@/lib/audit';
+import { cleanText } from '@/lib/validation';
 
 export async function POST(req: NextRequest) {
   try {
@@ -11,9 +12,11 @@ export async function POST(req: NextRequest) {
 
     const { user } = auth.ctx;
     const body = await req.json().catch(() => ({}));
-    const { weekId, feedback, mentorId: customMentorId } = body;
+    const weekId = typeof body.weekId === 'string' ? body.weekId : '';
+    const feedback = cleanText(body.feedback, 4000, 1);
+    const customMentorId = typeof body.mentorId === 'string' ? body.mentorId : null;
 
-    if (!weekId || !feedback || !String(feedback).trim()) {
+    if (!weekId || !feedback) {
       return NextResponse.json(
         { error: 'weekId и feedback обязательны для заполнения' },
         { status: 400 }
@@ -27,27 +30,33 @@ export async function POST(req: NextRequest) {
       return denyResponse();
     }
 
-    // Determine mentor ID: use current user's ID, or if admin, allow customMentorId
-    const mentorId = (user.role === Role.ADMIN && customMentorId) ? customMentorId : user.id;
+    // Подписант: сам куратор; администратор может подписать от имени конкретного куратора
+    let mentorId = user.id;
+    if (user.role === Role.ADMIN && customMentorId) {
+      const signer = await prisma.user.findUnique({ where: { id: customMentorId }, select: { role: true } });
+      if (!signer || (signer.role !== Role.MENTOR && signer.role !== Role.ADMIN)) {
+        return NextResponse.json({ error: 'Подписант должен быть куратором' }, { status: 400 });
+      }
+      mentorId = customMentorId;
+    }
 
     const review = await prisma.mentorReview.upsert({
       where: { weekId },
       update: {
         mentorId,
-        feedback: String(feedback).trim(),
+        feedback,
         signedAt: new Date(),
       },
       create: {
         weekId,
         mentorId,
-        feedback: String(feedback).trim(),
+        feedback,
         signedAt: new Date(),
       },
     });
 
     await audit({
-      actorId: user.id,
-      actorName: user.fullName,
+      ...auditActor(auth.ctx),
       action: 'MENTOR_REVIEW_SIGNED',
       targetType: 'WEEK',
       targetId: weekId,
@@ -60,7 +69,6 @@ export async function POST(req: NextRequest) {
       message: 'Ревью наставника подписано и сохранено!',
     });
   } catch (error) {
-    console.error('Mentor review error:', error);
-    return NextResponse.json({ error: 'Failed to save mentor review' }, { status: 500 });
+    return handleApiError('mentor/review', error, 'Не удалось сохранить ревью');
   }
 }

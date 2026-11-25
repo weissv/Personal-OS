@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
-import { authenticate } from '@/lib/auth';
-import { cleanGrade, cleanTime } from '@/lib/validation';
-import { audit } from '@/lib/audit';
+import { authenticate, badRequest, handleApiError } from '@/lib/auth';
+import { cleanDayOfWeek, cleanGrade, cleanText, cleanTime, timeToMinutes } from '@/lib/validation';
+import { audit, auditActor } from '@/lib/audit';
 
+const DAY_SHORT = ['', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
 
 // GET /api/v1/admin/timetable?grade=9
 export async function GET(req: NextRequest) {
@@ -11,70 +12,53 @@ export async function GET(req: NextRequest) {
     const auth = await authenticate({ admin: true }, req);
     if (!auth.ok) return auth.response;
 
-    const { searchParams } = new URL(req.url);
-    const gradeParam = searchParams.get('grade');
-    const gradeLevel = gradeParam ? cleanGrade(gradeParam) : null;
-
+    const gradeLevel = cleanGrade(new URL(req.url).searchParams.get('grade'));
     const slots = await prisma.timetableSlot.findMany({
       where: gradeLevel ? { gradeLevel } : {},
-      orderBy: [{ gradeLevel: 'asc' }, { dayOfWeek: 'asc' }, { orderIndex: 'asc' }],
+      orderBy: [{ gradeLevel: 'asc' }, { dayOfWeek: 'asc' }, { startTime: 'asc' }, { orderIndex: 'asc' }],
     });
-
-    return NextResponse.json({
-      success: true,
-      slots,
-    });
+    return NextResponse.json({ success: true, slots });
   } catch (error) {
-    console.error('Failed to get timetable slots:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    return handleApiError('admin/timetable:list', error);
   }
 }
 
-// POST /api/v1/admin/timetable
+// POST /api/v1/admin/timetable — урок в шаблон параллели (влияет на спринты, создаваемые после)
 export async function POST(req: NextRequest) {
   try {
     const auth = await authenticate({ admin: true }, req);
     if (!auth.ok) return auth.response;
-    const admin = auth.ctx.user;
 
     const body = await req.json().catch(() => ({}));
     const gradeLevel = cleanGrade(body.gradeLevel);
-    const dayOfWeek = parseInt(body.dayOfWeek, 10);
+    const dayOfWeek = cleanDayOfWeek(body.dayOfWeek, 6);
     const startTime = cleanTime(body.startTime);
     const endTime = cleanTime(body.endTime);
-    const title = String(body.title || '').trim();
+    const title = cleanText(body.title, 150, 1);
 
-    if (!gradeLevel || isNaN(dayOfWeek) || dayOfWeek < 1 || dayOfWeek > 7 || !startTime || !endTime || !title) {
-      return NextResponse.json(
-        { error: 'Заполните все поля: параллель, день недели (1-7), время начала (ЧЧ:ММ), время конца (ЧЧ:ММ), предмет' },
-        { status: 400 }
-      );
+    if (!gradeLevel || !dayOfWeek || !startTime || !endTime || !title) {
+      return badRequest('Заполните все поля: параллель, день недели (Пн–Сб), начало и конец (ЧЧ:ММ), предмет');
+    }
+    if (timeToMinutes(endTime) <= timeToMinutes(startTime)) {
+      return badRequest('Урок должен заканчиваться позже, чем начинается');
     }
 
+    const sameDay = await prisma.timetableSlot.count({ where: { gradeLevel, dayOfWeek } });
     const slot = await prisma.timetableSlot.create({
-      data: {
-        gradeLevel,
-        dayOfWeek,
-        startTime,
-        endTime,
-        title,
-        orderIndex: parseInt(body.orderIndex, 10) || 0,
-      },
+      data: { gradeLevel, dayOfWeek, startTime, endTime, title, orderIndex: sameDay + 1 },
     });
 
     await audit({
-      actorId: admin.id,
-      actorName: admin.fullName,
+      ...auditActor(auth.ctx),
       action: 'TIMETABLE_SLOT_CREATED',
       targetType: 'TIMETABLE',
       targetId: slot.id,
-      details: `${gradeLevel} класс: ${title} (${startTime}-${endTime}, день: ${dayOfWeek})`,
+      details: `${gradeLevel} класс, ${DAY_SHORT[dayOfWeek]} ${startTime}–${endTime}: ${title}`,
     });
 
     return NextResponse.json({ success: true, slot });
   } catch (error) {
-    console.error('Failed to create timetable slot:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    return handleApiError('admin/timetable:create', error, 'Не удалось добавить урок');
   }
 }
 
@@ -83,32 +67,25 @@ export async function DELETE(req: NextRequest) {
   try {
     const auth = await authenticate({ admin: true }, req);
     if (!auth.ok) return auth.response;
-    const admin = auth.ctx.user;
 
-    const { searchParams } = new URL(req.url);
-    const id = searchParams.get('id');
-
-    if (!id) {
-      return NextResponse.json({ error: 'Missing slot id' }, { status: 400 });
-    }
+    const id = new URL(req.url).searchParams.get('id');
+    if (!id) return badRequest('Не указан урок');
 
     const slot = await prisma.timetableSlot.findUnique({ where: { id } });
-    if (!slot) return NextResponse.json({ error: 'Slot not found' }, { status: 404 });
+    if (!slot) return NextResponse.json({ error: 'Урок не найден' }, { status: 404 });
 
     await prisma.timetableSlot.delete({ where: { id } });
 
     await audit({
-      actorId: admin.id,
-      actorName: admin.fullName,
+      ...auditActor(auth.ctx),
       action: 'TIMETABLE_SLOT_DELETED',
       targetType: 'TIMETABLE',
       targetId: id,
-      details: `Удален урок: ${slot.title} (${slot.gradeLevel} класс)`,
+      details: `${slot.gradeLevel} класс, ${DAY_SHORT[slot.dayOfWeek] || slot.dayOfWeek} ${slot.startTime}–${slot.endTime}: ${slot.title}`,
     });
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error('Failed to delete timetable slot:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    return handleApiError('admin/timetable:delete', error, 'Не удалось удалить урок');
   }
 }

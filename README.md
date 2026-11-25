@@ -38,7 +38,7 @@
 
 6. **Панель Куратора (Mentor Red Flags Panel):**
    * Автоматический расчет зон риска:
-     * 🔴 **High Migrations:** ученик перенес более 50% задач за спринт (сигнал перегрузки).
+     * 🔴 **High Migrations:** ученик перенёс 50% задач и более за спринт (сигнал перегрузки).
      * 🟡 **Empty Self-Study:** субботний блок пуст 2 недели подряд.
      * ⚪ **Silent Retro:** ретроспектива содержит отписки менее 10 символов («норм», «ок»).
    * Форма обратной связи наставника и электронная подпись спринта (`signedAt`).
@@ -47,50 +47,54 @@
 
 ## 🛠 Стек технологий
 
-* **Frontend:** Next.js 16 (App Router), TypeScript, TailwindCSS, Lucide Icons.
+* **Frontend:** Next.js 16 (App Router, Turbopack), React 19, TypeScript, Tailwind CSS 4, Lucide Icons.
 * **Backend:** Next.js Route Handlers (REST API), TypeScript.
-* **База данных и ORM:** PostgreSQL 18.4 (встроенный кластер), Prisma ORM 6.4.1.
-* **Storage:** AWS SDK for S3 / Cloudflare R2 (генерация Pre-signed URLs + локальный dev-адаптер).
-* **Media Processing:** Client-side HTML5 Canvas API (WebP) + MediaRecorder API (Opus).
+* **База данных и ORM:** PostgreSQL (встроенный кластер для разработки, Postgres 17 в Docker), Prisma ORM 6.4.
+* **Storage:** локальный том `public/uploads` с RBAC-отдачей файлов (+ адаптер S3 / Cloudflare R2).
+* **Media Processing:** Canvas API → WebP (JPEG-фолбэк для Safari) + MediaRecorder API (Opus).
 
 ---
 
-## 🚀 Запуск и тестирование
+## 🚀 Запуск и проверка
 
-### 1. Переменные окружения (`.env`)
+### 1. Переменные окружения (`.env.local`)
 ```env
 DATABASE_URL="postgresql://postgres:password@127.0.0.1:5433/mezon_sprint_os?schema=public"
-JWT_SECRET="mezon-sprint-os-super-secret-jwt-key-2026"
-NEXT_PUBLIC_APP_URL="http://localhost:3000"
-S3_BUCKET="mezon-sprint-media"
-S3_ENDPOINT="https://r2.storage.school.mezon"
-MEDIA_PUBLIC_URL="http://localhost:3000/api/v1/media/files"
+JWT_SECRET="<openssl rand -hex 32>"
+ADMIN_INITIAL_PASSWORD="<пароль администратора при первом запуске>"
+SEED_DEFAULT_PASSWORD="<временный пароль засеваемых кураторов и учеников (только для разработки)>"
 ```
+Секреты в репозиторий не попадают (`.env*` в `.gitignore`). В production сервер предупредит в логах, если `JWT_SECRET` совпадает с публичным значением из старых версий README.
 
-### 2. Запуск PostgreSQL и приложения
+### 2. База, схема, инварианты, начальные данные
 ```bash
-# Запуск встроенного PostgreSQL (порт 5433)
-node scripts/db-manager.js
-
-# Синхронизация схемы и запуск сидов
-npx prisma db push
-node prisma/seed.js
-
-# Запуск приложения
-npm run dev
-# или production
-npm run build && npm run start
+node scripts/db-manager.js          # встроенный PostgreSQL на порту 5433 (оставить работать)
+npx prisma db push                  # схема
+node scripts/apply-invariants.js    # Invariant I3: append-only журнал аудита (триггеры PostgreSQL)
+npm run db:seed                     # администратор + шаблон расписания MIS (+ состав, если школа пуста)
 ```
 
-Приложение доступно по адресу: [http://localhost:3000](http://localhost:3000)
+### 3. Приложение
+```bash
+npm run dev                         # http://localhost:3000
+npm run build && npm run start      # production
+```
+
+### 4. Проверки качества
+```bash
+npm run check                       # typecheck + ESLint + design-drift + тесты
+npm run test:unit                   # unit-тесты реального TS-кода (node:test, нужен Node ≥ 22.18)
+```
 
 ---
 
-## 👥 Демо-пользователи в интерфейсе
+## 👥 Роли и доступ
 
-В шапке сайта предусмотрен удобный **User Switcher**:
-1. **Даврон Рахимов (`davron@mezon.uz`):** Ученик 9 «А» (эталон субъектности, высокий DoD, субботний проект автополива теплицы).
-2. **Лейла Каримова (`leila@mezon.uz`):** Ученица 9 «А» (флаг 🔴 **High Migrations**: 58% переносов).
-3. **Сардор Умаров (`sardor@mezon.uz`):** Ученик 9 «А» (флаги 🟡 **Empty Self-Study** и ⚪ **Silent Retro**).
-4. **Малика Камалова (`curator@mezon.uz`):** Куратор 9 «А» (кабинет наставника, детекция рисков, подписание спринтов).
-5. **Азиз Рахимов (`parent.davron@mezon.uz`):** Родитель Даврона (демонстрация Selective Trust RBAC).
+| Роль | Что видит и делает |
+| --- | --- |
+| **Ученик** | Свой спринт: цель недели → утро → вечер → суббота → ретро. Добавляет и удаляет свои события, сам выбирает уровень доступа семьи. |
+| **Куратор** | Ученики своей параллели: маркеры риска, рефлексия, подпись ревью недели. |
+| **Родитель** | Только свои дети (переключатель, если их несколько) и только в пределах доступа, который выдал каждый ребёнок (закрыто / сводка / полный). |
+| **Администратор (Godmode)** | Реестр и регистрация, правка профилей и связей родитель–ребёнок, сброс паролей и отключение доступа, шаблон расписания, журнал аудита, диагностика, «войти от лица» (с записью в журнал). |
+
+Учётные данные выдаются администратором (Godmode → Регистрация / Сброс пароля) или скриптом `npm run credentials:generate`. Пароли в коде и репозитории не хранятся; смена или сброс пароля мгновенно завершает все прежние сессии пользователя.

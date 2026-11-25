@@ -1,92 +1,62 @@
 import { NextRequest, NextResponse } from 'next/server';
-import fs from 'fs';
+import fs from 'fs/promises';
 import path from 'path';
-import { UPLOAD_DIR, ensureUploadDir } from '@/lib/storage';
-import { authenticate, canAccessStudent, denyResponse, studentIdForWeek } from '@/lib/auth';
+import { resolveUploadPath } from '@/lib/storage';
+import { authenticate, canAccessStudentMedia, denyResponse, handleApiError, studentIdForWeek } from '@/lib/auth';
+import { MEDIA_CONTENT_TYPES } from '@/lib/validation';
 
-export async function GET(
-  req: NextRequest,
-  { params }: { params: Promise<{ path: string[] }> }
-) {
+/**
+ * Отдача медиа-артефакта с проверкой Selective Trust RBAC.
+ * Ключ: weeks/{weekId}/{timestamp}-{uuid}.{ext}. Любой другой путь — 404.
+ * Токен в ?token= допускается только здесь: <img>/<audio> не умеют слать заголовки.
+ */
+export async function GET(req: NextRequest, { params }: { params: Promise<{ path: string[] }> }) {
   try {
-    ensureUploadDir();
-    const { path: pathSegments } = await params;
-    if (!pathSegments || pathSegments.length === 0) {
-      return NextResponse.json({ error: 'Missing file path' }, { status: 400 });
+    const auth = await authenticate({ allowQueryToken: true }, req);
+    if (!auth.ok) return auth.response;
+
+    const { path: segments } = await params;
+    let key: string;
+    try {
+      key = (segments || []).map((s) => decodeURIComponent(s)).join('/');
+    } catch {
+      return NextResponse.json({ error: 'Некорректный путь' }, { status: 400 });
     }
 
-    // Decode URL-encoded segments (e.g. %2F -> /)
-    const rawJoined = pathSegments.join('/');
-    const decodedPath = decodeURIComponent(rawJoined);
-    const safeRelativePath = path.normalize(decodedPath).replace(/^(\.\.[\/\\])+/, '').replace(/^[\/\\]+/, '');
-    const resolvedUploadDir = path.resolve(UPLOAD_DIR);
-
-    let filePath = path.resolve(resolvedUploadDir, safeRelativePath);
-
-    // 1. Path traversal protection
-    if (!filePath.startsWith(resolvedUploadDir)) {
-      return NextResponse.json({ error: 'Access denied' }, { status: 403 });
+    const parts = key.split('/');
+    if (parts.length !== 3 || parts[0] !== 'weeks') {
+      return NextResponse.json({ error: 'Файл не найден' }, { status: 404 });
     }
 
-    // 2. Fallback resolution if file path had alternate formatting
-    if (!fs.existsSync(filePath)) {
-      // Check if file is stored in week subdirectory or by basename
-      const baseName = path.basename(safeRelativePath);
-      const fallbackDirect = path.resolve(resolvedUploadDir, baseName);
-      if (fs.existsSync(fallbackDirect)) {
-        filePath = fallbackDirect;
-      } else {
-        return NextResponse.json(
-          { error: 'File not found on server storage', path: safeRelativePath },
-          { status: 404 }
-        );
-      }
+    const filePath = resolveUploadPath(key);
+    if (!filePath) return NextResponse.json({ error: 'Доступ запрещён' }, { status: 403 });
+
+    const studentId = await studentIdForWeek(parts[1]);
+    if (!studentId) return NextResponse.json({ error: 'Файл не найден' }, { status: 404 });
+    if (!(await canAccessStudentMedia(auth.ctx, studentId))) return denyResponse();
+
+    let file: Buffer;
+    try {
+      file = await fs.readFile(filePath);
+    } catch {
+      return NextResponse.json({ error: 'Файл не найден в хранилище' }, { status: 404 });
     }
 
-    // 3. Selective Trust RBAC Authorization Check
-    // Files are structured as: weeks/{weekId}/{timestamp}-{uuid}.{ext}
-    const segments = safeRelativePath.split(/[/\\]/);
-    if (segments.length >= 2 && segments[0] === 'weeks') {
-      const weekId = segments[1];
-      const auth = await authenticate({}, req);
-      if (!auth.ok) {
-        return auth.response;
-      }
-
-      const studentId = await studentIdForWeek(weekId);
-      if (studentId) {
-        const canAccess = await canAccessStudent(auth.ctx, studentId, 'read');
-        if (!canAccess) {
-          return denyResponse();
-        }
-      }
-    }
-
-    const fileBuffer = fs.readFileSync(filePath);
     const ext = path.extname(filePath).toLowerCase();
-
-    let contentType = 'application/octet-stream';
-    if (ext === '.webp') contentType = 'image/webp';
-    else if (ext === '.webm') contentType = 'audio/webm';
-    else if (ext === '.jpg' || ext === '.jpeg') contentType = 'image/jpeg';
-    else if (ext === '.png') contentType = 'image/png';
-    else if (ext === '.mp3') contentType = 'audio/mpeg';
-
-    const isDownload = req.nextUrl.searchParams.get('download') === 'true';
     const fileName = path.basename(filePath);
-
     const headers: Record<string, string> = {
-      'Content-Type': contentType,
+      'Content-Type': MEDIA_CONTENT_TYPES[ext] || 'application/octet-stream',
+      'Content-Length': String(file.length),
       'Cache-Control': 'private, no-transform, max-age=86400',
+      'X-Content-Type-Options': 'nosniff',
+      'Content-Security-Policy': "default-src 'none'; sandbox",
     };
-
-    if (isDownload) {
+    if (req.nextUrl.searchParams.get('download') === 'true') {
       headers['Content-Disposition'] = `attachment; filename="${encodeURIComponent(fileName)}"`;
     }
 
-    return new NextResponse(fileBuffer, { headers });
+    return new NextResponse(new Uint8Array(file), { headers });
   } catch (error) {
-    console.error('File serve error:', error);
-    return NextResponse.json({ error: 'Failed to read file' }, { status: 500 });
+    return handleApiError('media/files', error, 'Не удалось прочитать файл');
   }
 }

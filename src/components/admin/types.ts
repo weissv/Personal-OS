@@ -33,9 +33,9 @@ export interface AdminStats {
   atRiskStudents: Array<{
     id: string;
     fullName: string;
-    gradeLevel: number;
+    gradeLevel: number | null;
     email: string;
-    username: string;
+    username: string | null;
     migrationRate: number;
     flags: string[];
   }>;
@@ -49,6 +49,7 @@ export interface AdminUser {
   role: 'STUDENT' | 'MENTOR' | 'PARENT' | 'ADMIN';
   gradeLevel: number | null;
   isActive: boolean;
+  lastLoginAt: string | null;
   sprintsCount: number;
   parents: Array<{ id: string; fullName: string; accessLevel: string }>;
   students: Array<{ id: string; fullName: string; accessLevel: string }>;

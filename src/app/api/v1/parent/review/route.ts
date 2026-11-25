@@ -1,19 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { Role } from '@prisma/client';
-import { authenticate, canAccessStudent, denyResponse, notFoundResponse, studentIdForWeek } from '@/lib/auth';
-import { audit } from '@/lib/audit';
+import { authenticate, canAccessStudent, denyResponse, handleApiError, notFoundResponse, studentIdForWeek } from '@/lib/auth';
+import { audit, auditActor } from '@/lib/audit';
+import { cleanText } from '@/lib/validation';
 
 export async function POST(req: NextRequest) {
   try {
     const auth = await authenticate({ roles: [Role.PARENT, Role.ADMIN] }, req);
     if (!auth.ok) return auth.response;
 
-    const { user } = auth.ctx;
     const body = await req.json().catch(() => ({}));
-    const { weekId, comment } = body;
+    const weekId = typeof body.weekId === 'string' ? body.weekId : '';
+    const comment = cleanText(body.comment, 2000, 1);
 
-    if (!weekId || !comment || !String(comment).trim()) {
+    if (!weekId || !comment) {
       return NextResponse.json(
         { error: 'weekId и comment обязательны для заполнения' },
         { status: 400 }
@@ -30,19 +31,18 @@ export async function POST(req: NextRequest) {
     const review = await prisma.parentReview.upsert({
       where: { weekId },
       update: {
-        comment: String(comment).trim(),
+        comment,
         signedAt: new Date(),
       },
       create: {
         weekId,
-        comment: String(comment).trim(),
+        comment,
         signedAt: new Date(),
       },
     });
 
     await audit({
-      actorId: user.id,
-      actorName: user.fullName,
+      ...auditActor(auth.ctx),
       action: 'PARENT_REVIEW_SIGNED',
       targetType: 'WEEK',
       targetId: weekId,
@@ -55,7 +55,6 @@ export async function POST(req: NextRequest) {
       message: 'Комментарий родителя подписан и сохранен!',
     });
   } catch (error) {
-    console.error('Parent review error:', error);
-    return NextResponse.json({ error: 'Failed to save parent review' }, { status: 500 });
+    return handleApiError('parent/review', error, 'Не удалось сохранить комментарий');
   }
 }

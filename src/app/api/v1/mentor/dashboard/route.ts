@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { Role, SlotStatus } from '@prisma/client';
 import { authenticate, handleApiError } from '@/lib/auth';
-import { getCurrentWeekNumber } from '@/lib/sprint';
+import { getCurrentWeekNumber, pickActiveSprint, todayUTC } from '@/lib/sprint';
+import { cleanGrade } from '@/lib/validation';
 
 
 export interface StudentRedFlags {
@@ -25,11 +26,13 @@ export async function GET(req: NextRequest) {
     const url = new URL(req.url);
     const requestedGrade = url.searchParams.get('grade');
 
+    // Куратор параллели видит только свою параллель (Invariant I4); выбор параллели — для админа
+    // и для куратора без закреплённой параллели.
     let gradeFilter: number | undefined = undefined;
-    if (requestedGrade && !isNaN(Number(requestedGrade))) {
-      gradeFilter = Number(requestedGrade);
-    } else if (user.role === Role.MENTOR && user.gradeLevel) {
+    if (user.role === Role.MENTOR && user.gradeLevel != null) {
       gradeFilter = user.gradeLevel;
+    } else if (requestedGrade) {
+      gradeFilter = cleanGrade(requestedGrade) ?? undefined;
     }
 
     const whereClause: { role: Role; gradeLevel?: number } = {
@@ -42,20 +45,18 @@ export async function GET(req: NextRequest) {
       where: whereClause,
       include: {
         sprints: {
-          orderBy: { createdAt: 'desc' },
-          take: 1,
           include: {
             weeks: {
               orderBy: { weekNumber: 'asc' },
               include: {
                 days: {
-                  include: {
-                    slots: true,
+                  select: {
+                    dayOfWeek: true,
+                    slots: { select: { status: true, isGhost: true } },
                   },
                 },
-                mentorReview: true,
-                parentReview: true,
-                mediaAssets: true,
+                mentorReview: { select: { feedback: true, signedAt: true } },
+                _count: { select: { mediaAssets: true } },
               },
             },
           },
@@ -64,9 +65,11 @@ export async function GET(req: NextRequest) {
       orderBy: [{ gradeLevel: 'asc' }, { fullName: 'asc' }],
     });
 
+    const today = todayUTC();
     const studentRows = students.map((student) => {
-      const activeSprint = student.sprints[0];
+      const activeSprint = pickActiveSprint(student.sprints, today);
       const weeks = activeSprint?.weeks || [];
+      const currentWeekNumber = activeSprint ? getCurrentWeekNumber(activeSprint, today) : 1;
 
       // Calculate statistics across all active/submitted weeks
       let totalTasks = 0;
@@ -89,7 +92,8 @@ export async function GET(req: NextRequest) {
 
         const saturday = week.days.find((d) => d.dayOfWeek === 6);
         const satSlots = saturday?.slots.filter((s) => !s.isGhost) || [];
-        if (week.isSubmitted || week.weekNumber < 3) {
+        const weekIsOver = week.endDate < today;
+        if (week.isSubmitted || weekIsOver) {
           if (satSlots.length === 0) {
             consecutiveEmptySelfStudy++;
             if (consecutiveEmptySelfStudy > maxEmptySelfStudyStreak) {
@@ -126,8 +130,7 @@ export async function GET(req: NextRequest) {
         silentRetroSnippet: silentRetroSnippet || undefined,
       };
 
-      const targetWeekNumber = activeSprint ? getCurrentWeekNumber(activeSprint) : 1;
-      const currentWeek = weeks.find((w) => w.weekNumber === targetWeekNumber) || weeks[0];
+      const currentWeek = weeks.find((w) => w.weekNumber === currentWeekNumber) || weeks[0];
 
       return {
         student: {
@@ -136,11 +139,10 @@ export async function GET(req: NextRequest) {
           email: student.email,
           gradeLevel: student.gradeLevel,
         },
-        activeSprint: {
-          id: activeSprint?.id,
-          title: activeSprint?.title,
-          weeksTotal: activeSprint?.weeksTotal,
-        },
+        activeSprint: activeSprint
+          ? { id: activeSprint.id, title: activeSprint.title, weeksTotal: activeSprint.weeksTotal }
+          : null,
+        currentWeekNumber,
         flags,
         metrics: {
           totalTasks,
@@ -161,12 +163,15 @@ export async function GET(req: NextRequest) {
           hasMentorReview: !!w.mentorReview,
           mentorFeedback: w.mentorReview?.feedback,
           signedAt: w.mentorReview?.signedAt,
-          mediaAssetsCount: w.mediaAssets.length,
-          slotsSummary: {
-            total: w.days.flatMap((d) => d.slots).filter((s) => !s.isGhost).length,
-            done: w.days.flatMap((d) => d.slots).filter((s) => s.status === 'DONE').length,
-            migrated: w.days.flatMap((d) => d.slots).filter((s) => s.status === 'MIGRATED').length,
-          },
+          mediaAssetsCount: w._count.mediaAssets,
+          slotsSummary: (() => {
+            const active = w.days.flatMap((d) => d.slots).filter((s) => !s.isGhost);
+            return {
+              total: active.length,
+              done: active.filter((s) => s.status === SlotStatus.DONE).length,
+              migrated: active.filter((s) => s.status === SlotStatus.MIGRATED).length,
+            };
+          })(),
         })),
         currentWeekId: currentWeek?.id,
       };
@@ -176,6 +181,8 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({
       className: cohortLabel,
+      gradeLevel: gradeFilter ?? null,
+      canChooseGrade: !(user.role === Role.MENTOR && user.gradeLevel != null),
       studentsCount: studentRows.length,
       redFlagsSummary: {
         highMigrationsCount: studentRows.filter((r) => r.flags.highMigrations).length,

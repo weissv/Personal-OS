@@ -1,284 +1,160 @@
 /* ==========================================================================
-   MEZON SPRINT OS — PRODUCTION LOGIN TERMINAL STYLES
-   Adheres to Mezon design tokens: dark terminal, constructivist accents
+   MEZON SPRINT OS — ЭКРАН ВХОДА
+   Слева — «история дня» (B&W-фото под вуалью, смещённый магентовый квадрат,
+   робот-маскот, как на mezon.uz), справа — форма. На телефоне — одна колонка,
+   форма первой: ученик пришёл войти, а не читать.
    ========================================================================== */
 
 .mz-login-page {
   min-height: 100dvh;
   display: flex;
   flex-direction: column;
-  background: var(--black, #121212);
-  color: #ffffff;
-  font-family: var(--font-roboto), "Roboto", system-ui, sans-serif;
+  background: var(--black);
+  color: #fff;
 }
 
-.mz-login-strip {
-  background: #0a0a0a;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-  padding: 10px 16px;
-}
-
+.mz-login-strip { background: #0a0a0a; border-bottom: 1px solid rgba(255, 255, 255, 0.08); padding: 10px 16px; }
 .mz-login-strip__inner {
-  max-width: 1200px;
-  margin: 0 auto;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 8px;
-  font-size: 12px;
+  max-width: 1120px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; font-size: 12px;
+}
+.mz-login-strip__tagline { color: rgba(255, 255, 255, 0.6); letter-spacing: 0.4px; }
+.mz-login-strip__link { color: var(--teal-l); display: inline-flex; align-items: center; gap: 4px; font-weight: 600; }
+.mz-login-strip__link:hover { color: #fff; }
+
+.mz-login-main { flex: 1; display: flex; align-items: center; justify-content: center; padding: 40px 20px; }
+
+.mz-login-split {
+  width: 100%; max-width: 1120px;
+  display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(360px, 440px);
+  align-items: stretch; box-shadow: 0 40px 80px rgba(0, 0, 0, 0.45);
 }
 
-.mz-login-strip__left {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
+/* --- История --- */
+.mz-login-story {
+  position: relative; overflow: hidden; isolation: isolate;
+  padding: 48px 48px 40px;
+  background:
+    linear-gradient(135deg, rgba(18, 18, 18, 0.94) 0%, rgba(18, 18, 18, 0.82) 60%, rgba(160, 74, 132, 0.55) 100%),
+    url("/brand/service-bg.jpg") center / cover no-repeat;
+  border-left: 8px solid var(--magenta);
 }
-
-.mz-login-strip__badge {
-  background: var(--peach, #fcd5a6);
-  color: var(--black, #121212);
-  padding: 2px 8px;
-  font-weight: 800;
-  font-size: 10px;
-  letter-spacing: 1px;
-  text-transform: uppercase;
+.mz-login-story__square {
+  position: absolute; z-index: -1; right: -60px; bottom: -60px; width: 260px; height: 260px;
+  background: var(--magenta); opacity: 0.35; transform: rotate(8deg);
 }
-
-.mz-login-strip__tagline {
-  color: rgba(255, 255, 255, 0.7);
-  font-size: 12px;
-}
-
-.mz-login-strip__link {
-  color: var(--teal-l, #57a7b3);
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  text-decoration: none;
-  font-weight: 600;
-  font-size: 12px;
-  transition: color 0.2s;
-}
-
-.mz-login-strip__link:hover {
-  color: #ffffff;
-}
-
-.mz-login-main {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 32px 16px;
-  box-sizing: border-box;
-}
-
-.mz-login-container {
-  width: 100%;
-  max-width: 440px;
-}
-
-.mz-login-header {
-  text-align: center;
-  margin-bottom: 28px;
-}
-
-.mz-login-logo {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  margin-bottom: 16px;
+.mz-login-story__logo { display: block; width: 132px; height: auto; margin-bottom: 36px; }
+.mz-login-story__mascot {
+  position: absolute; right: 24px; bottom: -18px; width: 170px; height: auto; z-index: -1;
+  filter: drop-shadow(0 18px 30px rgba(0, 0, 0, 0.5));
 }
 
 .mz-login-kicker {
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 2.5px;
-  text-transform: uppercase;
-  color: var(--magenta, #a04a84);
-  margin-bottom: 6px;
+  font-size: 11px; font-weight: 800; letter-spacing: 2px; text-transform: uppercase; color: var(--peach); margin-bottom: 14px;
 }
-
 .mz-login-title {
-  font-size: clamp(22px, 5vw, 26px);
-  font-weight: 800;
-  margin: 0;
-  letter-spacing: -0.5px;
-  line-height: 1.25;
-  color: #ffffff;
+  margin: 0 0 16px; color: #fff; font-size: clamp(30px, 3.4vw, 42px); font-weight: 900; line-height: 1.12; letter-spacing: -0.5px;
 }
-
 .mz-login-title__highlight {
-  background: var(--teal, #00859e);
-  padding: 2px 8px;
-  color: #ffffff;
-  display: inline-block;
+  background: var(--teal); color: #fff; padding: 0 10px;
+  -webkit-box-decoration-break: clone; box-decoration-break: clone;
+}
+.mz-login-subtitle { margin: 0 0 32px; max-width: 460px; color: rgba(255, 255, 255, 0.72); font-size: 15px; line-height: 1.7; }
+
+.mz-login-steps { list-style: none; margin: 0 0 32px; padding: 0; display: grid; gap: 14px; max-width: 440px; }
+.mz-login-steps li { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 14px; align-items: start; font-size: 14px; color: rgba(255, 255, 255, 0.7); line-height: 1.5; }
+.mz-login-steps b { display: block; color: #fff; font-size: 15px; }
+.mz-login-steps b small { margin-left: 6px; font-weight: 500; color: var(--peach); font-variant-numeric: tabular-nums; }
+.mz-login-steps__icon {
+  display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px;
+  background: rgba(255, 255, 255, 0.08); border-left: 3px solid var(--teal); color: var(--teal-l);
 }
 
-.mz-login-subtitle {
-  color: rgba(255, 255, 255, 0.65);
-  font-size: 13px;
-  margin-top: 8px;
-  line-height: 1.5;
+.mz-login-quote {
+  margin: 0; max-width: 380px; padding-left: 16px; border-left: 2px solid rgba(255, 255, 255, 0.25);
+  font-style: italic; font-size: 13px; line-height: 1.6; color: rgba(255, 255, 255, 0.62);
+}
+.mz-login-quote cite {
+  display: block; margin-top: 6px; font-style: normal; font-size: 10px; font-weight: 800; letter-spacing: 1.5px;
+  text-transform: uppercase; color: rgba(255, 255, 255, 0.45);
 }
 
+/* --- Форма --- */
 .mz-login-card {
-  background: #1c1c1c;
-  border: 2px solid rgba(255, 255, 255, 0.12);
-  box-shadow: 0 24px 48px rgba(0, 0, 0, 0.6);
-  padding: clamp(20px, 5vw, 32px);
-  position: relative;
-  box-sizing: border-box;
+  position: relative; display: flex; flex-direction: column; justify-content: center;
+  padding: 48px 40px 36px; background: #1c1c1c;
 }
-
 .mz-login-card__accent {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 4px;
-  background: linear-gradient(90deg, #a04a84, #00859e, #fcd5a6);
+  position: absolute; top: 0; left: 0; right: 0; height: 4px;
+  background: linear-gradient(90deg, var(--magenta), var(--teal), var(--peach));
 }
+.mz-login-card__title { margin: 0 0 6px; color: #fff; font-size: 28px; font-weight: 900; }
+.mz-login-card__lead { margin: 0 0 28px; color: rgba(255, 255, 255, 0.55); font-size: 13px; line-height: 1.6; }
 
 .mz-login-error {
-  background: rgba(192, 57, 43, 0.18);
-  border: 1px solid var(--error, #c0392b);
-  color: #ff7675;
-  padding: 12px 14px;
-  font-size: 13px;
-  font-weight: 600;
-  margin-bottom: 20px;
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  line-height: 1.4;
+  display: flex; align-items: flex-start; gap: 10px; margin-bottom: 20px; padding: 12px 14px;
+  background: rgba(192, 57, 43, 0.18); border-left: 4px solid var(--error); color: #ff7675;
+  font-size: 13px; font-weight: 600; line-height: 1.5; outline: none;
 }
+.mz-login-error span:first-child { font-weight: 900; }
 
-.mz-login-field {
-  margin-bottom: 18px;
-}
-
+.mz-login-field { margin-bottom: 20px; }
 .mz-login-label {
-  display: block;
-  font-size: 11px;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: 1px;
-  color: var(--peach, #fcd5a6);
-  margin-bottom: 8px;
+  display: block; margin-bottom: 8px; color: var(--peach); font-size: 11px; font-weight: 800;
+  letter-spacing: 1.2px; text-transform: uppercase;
 }
-
-.mz-login-label-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 8px;
-}
-
-.mz-login-label-hint {
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.4);
-}
-
-.mz-login-input-wrap {
-  position: relative;
-}
-
-.mz-login-input-icon {
-  position: absolute;
-  left: 14px;
-  top: 50%;
-  transform: translateY(-50%);
-  color: rgba(255, 255, 255, 0.4);
-  pointer-events: none;
-}
-
+.mz-login-input-wrap { position: relative; display: flex; align-items: center; }
+.mz-login-input-icon { position: absolute; left: 14px; color: rgba(255, 255, 255, 0.4); pointer-events: none; }
 .mz-login-input {
-  width: 100%;
-  background: var(--black, #121212);
-  border: 1.5px solid rgba(255, 255, 255, 0.2);
-  padding: 12px 14px 12px 42px;
-  color: #ffffff;
-  font-size: 16px;
-  outline: none;
-  box-sizing: border-box;
-  transition: border-color 0.2s;
-  min-height: 44px;
+  width: 100%; height: 50px; padding: 0 16px 0 42px; background: var(--black); color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.12); border-bottom: 3px solid rgba(255, 255, 255, 0.12); border-radius: 0;
+  font-size: 16px; outline: none; transition: border-color 0.2s, background 0.2s; -webkit-appearance: none; appearance: none;
 }
-
-.mz-login-input--password {
-  padding-right: 44px;
+.mz-login-input::placeholder { color: rgba(255, 255, 255, 0.28); }
+.mz-login-input:hover { border-color: rgba(255, 255, 255, 0.22); }
+.mz-login-input:focus { border-color: rgba(255, 255, 255, 0.22); border-bottom-color: var(--teal); background: #0a0a0a; }
+.mz-login-input[aria-invalid="true"] { border-bottom-color: var(--error); }
+.mz-login-input--password { padding-right: 48px; }
+.mz-login-input:-webkit-autofill {
+  -webkit-text-fill-color: #fff; box-shadow: 0 0 0 1000px var(--black) inset; caret-color: #fff;
 }
-
-.mz-login-input:focus {
-  border-color: var(--teal, #00859e);
-}
-
-.mz-login-input:focus-visible {
-  outline: 2px solid var(--teal, #00859e);
-  outline-offset: 1px;
-}
-
 .mz-login-toggle-pw {
-  position: absolute;
-  right: 12px;
-  top: 50%;
-  transform: translateY(-50%);
-  background: none;
-  border: none;
-  color: rgba(255, 255, 255, 0.5);
-  cursor: pointer;
-  padding: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 36px;
-  min-height: 36px;
+  position: absolute; right: 4px; width: 42px; height: 42px; display: inline-flex; align-items: center; justify-content: center;
+  background: none; border: none; color: rgba(255, 255, 255, 0.5); transition: color 0.2s;
 }
-
-.mz-login-toggle-pw:hover {
-  color: #ffffff;
-}
+.mz-login-toggle-pw:hover, .mz-login-toggle-pw[aria-pressed="true"] { color: #fff; }
 
 .mz-login-submit {
-  width: 100%;
-  background: var(--teal, #00859e);
-  color: #ffffff;
-  border: none;
-  padding: 14px 20px;
-  font-weight: 800;
-  font-size: 14px;
-  text-transform: uppercase;
-  letter-spacing: 1px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  transition: background 0.2s, opacity 0.2s;
-  min-height: 48px;
-  margin-top: 24px;
+  width: 100%; height: 52px; margin-top: 8px; display: inline-flex; align-items: center; justify-content: center; gap: 10px;
+  background: var(--magenta); color: #fff; border: none; font-size: 14px; font-weight: 800; letter-spacing: 1px;
+  text-transform: uppercase; transition: background 0.2s, transform 0.1s;
 }
+.mz-login-submit:hover:not(:disabled) { background: var(--teal); }
+.mz-login-submit:active:not(:disabled) { transform: translateY(1px); }
+.mz-login-submit:disabled { opacity: 0.7; cursor: progress; }
 
-.mz-login-submit:hover:not(:disabled) {
-  background: #009bb8;
-}
-
-.mz-login-submit:disabled {
-  cursor: not-allowed;
-  opacity: 0.75;
-}
+.mz-login-hint { margin: 18px 0 0; color: rgba(255, 255, 255, 0.45); font-size: 12px; line-height: 1.6; }
+.mz-login-hint--warn { margin-top: 8px; color: var(--peach); font-weight: 700; }
 
 .mz-login-footer {
-  text-align: center;
-  margin-top: 24px;
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.45);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  flex-wrap: wrap;
+  display: flex; align-items: flex-start; gap: 8px; margin-top: 24px; padding-top: 18px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08); color: rgba(255, 255, 255, 0.45); font-size: 12px; line-height: 1.55;
+}
+.mz-login-footer svg { flex: none; margin-top: 2px; color: var(--teal-l); }
+
+.mz-spin { animation: mz-login-spin 0.8s linear infinite; }
+@keyframes mz-login-spin { to { transform: rotate(360deg); } }
+
+/* --- Планшеты и телефоны --- */
+@media (max-width: 960px) {
+  .mz-login-main { padding: 0; align-items: stretch; }
+  .mz-login-split { grid-template-columns: minmax(0, 1fr); box-shadow: none; }
+  .mz-login-card { order: -1; padding: 32px 20px 28px; }
+  .mz-login-story { padding: 32px 20px 120px; border-left-width: 6px; }
+  .mz-login-story__logo { margin-bottom: 24px; }
+  .mz-login-story__mascot { width: 120px; right: 12px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mz-spin { animation: none; }
 }

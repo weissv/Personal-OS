@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import Image from 'next/image';
 import {
   Sun,
@@ -14,9 +14,10 @@ import {
   ExternalLink,
   Sparkles,
   LogOut,
-  Menu,
+  KeyRound,
   X,
 } from 'lucide-react';
+import { ChangePasswordDialog } from './ChangePasswordDialog';
 
 export type ViewMode = 'morning' | 'evening' | 'saturday' | 'retro' | 'mentor' | 'parent' | 'godmode';
 
@@ -33,11 +34,12 @@ interface NavigationHeaderProps {
   currentView: ViewMode;
   onViewChange: (view: ViewMode) => void;
   currentUser: AppUser | null;
-  availableUsers: AppUser[];
-  onSwitchUser: (userId: string) => void;
   isMobileDeviceFrame: boolean;
   onToggleDeviceFrame: () => void;
   selectedWeekNumber: number;
+  weeksTotal: number;
+  sprintTitle: string | null;
+  showWeek: boolean;
   isGodmode?: boolean;
   isImpersonating?: boolean;
   onRevertToAdmin?: () => void;
@@ -49,42 +51,29 @@ const ROLE_LABEL: Record<string, string> = {
   STUDENT: 'Ученик',
   MENTOR: 'Куратор',
   PARENT: 'Родитель',
-  ADMIN: 'Основатель (Godmode)',
+  ADMIN: 'Администратор',
 };
 
-const NAV: Array<{
-  view: ViewMode;
-  label: string;
-  hint: string;
-  icon: React.ReactNode;
-  roles: string[];
-}> = [
-  { view: 'godmode', label: 'Godmode', hint: 'Школа', icon: <Sparkles size={22} />, roles: ['ADMIN'] },
+const NAV: Array<{ view: ViewMode; label: string; hint: string; icon: React.ReactNode; roles: string[] }> = [
+  { view: 'godmode', label: 'Godmode', hint: 'школа', icon: <Sparkles size={22} />, roles: ['ADMIN'] },
   { view: 'morning', label: 'Утро', hint: '07:30', icon: <Sun size={22} />, roles: ['STUDENT'] },
   { view: 'evening', label: 'Вечер', hint: '16:45', icon: <Moon size={22} />, roles: ['STUDENT'] },
   { view: 'saturday', label: 'Сб', hint: 'проект', icon: <Hammer size={22} />, roles: ['STUDENT'] },
   { view: 'retro', label: 'Вс', hint: 'ретро', icon: <RotateCw size={22} />, roles: ['STUDENT'] },
-  { view: 'mentor', label: 'Куратор', hint: 'Класс', icon: <Compass size={22} />, roles: ['MENTOR'] },
-  { view: 'parent', label: 'Родитель', hint: 'доверие', icon: <ShieldCheck size={22} />, roles: ['PARENT'] },
+  { view: 'mentor', label: 'Класс', hint: 'куратор', icon: <Compass size={22} />, roles: ['MENTOR'] },
+  { view: 'parent', label: 'Неделя', hint: 'доверие', icon: <ShieldCheck size={22} />, roles: ['PARENT'] },
 ];
-
-function getUserSubtitle(u: AppUser): string {
-  if (u.role === 'ADMIN') return '⚡ Полный GODMODE';
-  if (u.role === 'STUDENT') return u.gradeLevel ? `${u.gradeLevel} класс` : 'Ученик';
-  if (u.role === 'MENTOR') return u.gradeLevel ? `Куратор ${u.gradeLevel} класса` : 'Куратор школы';
-  if (u.role === 'PARENT') return 'Родитель (Selective Trust)';
-  return '';
-}
 
 export const NavigationHeader: React.FC<NavigationHeaderProps> = ({
   currentView,
   onViewChange,
   currentUser,
-  availableUsers,
-  onSwitchUser,
   isMobileDeviceFrame,
   onToggleDeviceFrame,
   selectedWeekNumber,
+  weeksTotal,
+  sprintTitle,
+  showWeek,
   isGodmode = false,
   isImpersonating = false,
   onRevertToAdmin,
@@ -92,35 +81,50 @@ export const NavigationHeader: React.FC<NavigationHeaderProps> = ({
   children,
 }) => {
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [passwordOpen, setPasswordOpen] = useState(false);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
+
+  // Esc закрывает меню и возвращает фокус на кнопку профиля
+  useEffect(() => {
+    if (!userMenuOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setUserMenuOpen(false);
+        menuButtonRef.current?.focus();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [userMenuOpen]);
 
   const role = currentUser?.role;
-  let items = role ? NAV.filter((n) => n.roles.includes(role)) : NAV;
-  if (isGodmode && !items.some((i) => i.view === 'godmode')) {
-    items = [{ view: 'godmode', label: 'Godmode', hint: 'Школа', icon: <Sparkles size={22} />, roles: ['ADMIN'] }, ...items];
-  }
+  let items = role ? NAV.filter((n) => n.roles.includes(role)) : [];
+  // Администратор во время имперсонации видит экраны пользователя + возврат в Godmode
+  if (isGodmode && !items.some((i) => i.view === 'godmode')) items = [NAV[0], ...items];
+
+  const subtitle = sprintTitle?.replace(/\s*\(\d+ класс\)\s*$/, '') || 'Mezon Inspiring School';
 
   return (
     <>
-      {/* Impersonation top strip */}
+      <a href="#main" className="mz-skip">
+        Перейти к содержимому
+      </a>
+
       {isImpersonating && (
-        <div className="mz-impersonate-bar">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Sparkles size={16} color="var(--peach, #fcd5a6)" />
+        <div className="mz-impersonate-bar" role="status">
+          <div className="mz-impersonate-bar__text">
+            <Sparkles size={16} aria-hidden="true" />
             <span>
-              ⚡ Просмотр от лица <strong>{currentUser?.fullName}</strong> ({ROLE_LABEL[role || ''] || role})
+              Просмотр от лица <strong>{currentUser?.fullName}</strong> · {ROLE_LABEL[role || ''] || role}
+              <span className="mz-impersonate-bar__note">. Все действия записываются в журнал от вашего имени.</span>
             </span>
           </div>
-          <button
-            type="button"
-            onClick={onRevertToAdmin}
-            className="mz-impersonate-bar__btn"
-          >
-            ⚡ Вернуться в Godmode
+          <button type="button" onClick={onRevertToAdmin} className="mz-impersonate-bar__btn">
+            ← Godmode
           </button>
         </div>
       )}
 
-      {/* Ecosystem strip */}
       <div className="mz-strip">
         <div className="mz-strip__inner">
           <div className="mz-strip__text">
@@ -130,132 +134,127 @@ export const NavigationHeader: React.FC<NavigationHeaderProps> = ({
             </span>
           </div>
           <a className="site" href="https://mezon.uz/" target="_blank" rel="noopener noreferrer">
-            mezon.uz <ExternalLink size={11} style={{ display: 'inline', marginLeft: 4 }} />
+            mezon.uz <ExternalLink size={11} aria-hidden="true" />
           </a>
         </div>
       </div>
 
       <header className="mz-header">
-        <div
-          className="mz-logo"
-          onClick={() => isGodmode && onViewChange('godmode')}
-          style={{ cursor: isGodmode ? 'pointer' : 'default' }}
-        >
-          <Image src="/brand/logo.png" alt="Mezon Inspiring School" width={118} height={53} priority />
-          <div className="mz-logo__os">
-            Sprint OS
-            <span>1 четверть · 2026</span>
+        {isGodmode ? (
+          <button type="button" className="mz-logo mz-logo--button" onClick={() => onViewChange('godmode')} aria-label="Открыть Godmode">
+            <Image src="/brand/logo.png" alt="Mezon Inspiring School" width={118} height={53} priority />
+            <span className="mz-logo__os">
+              Sprint OS
+              <span>{subtitle}</span>
+            </span>
+          </button>
+        ) : (
+          <div className="mz-logo">
+            <Image src="/brand/logo.png" alt="Mezon Inspiring School" width={118} height={53} priority />
+            <div className="mz-logo__os">
+              Sprint OS
+              <span>{subtitle}</span>
+            </div>
           </div>
-        </div>
+        )}
 
         <div className="mz-header__right">
-          {currentView !== 'godmode' && (
+          {showWeek && (
             <div className="mz-header__week">
               <small>Спринт</small>
-              <b className="mz-num">Неделя {selectedWeekNumber} / 10</b>
+              <b className="mz-num">
+                Неделя {selectedWeekNumber} / {weeksTotal}
+              </b>
             </div>
           )}
 
           {isGodmode && currentView !== 'godmode' && (
-            <button
-              type="button"
-              onClick={() => onViewChange('godmode')}
-              className="mz-godmode-btn"
-            >
-              <Sparkles size={14} />
-              <span>⚡ Godmode</span>
+            <button type="button" onClick={() => onViewChange('godmode')} className="mz-godmode-btn">
+              <Sparkles size={14} aria-hidden="true" />
+              <span>Godmode</span>
             </button>
           )}
 
-          <button
-            type="button"
-            className="mz-device"
-            aria-pressed={isMobileDeviceFrame}
-            onClick={onToggleDeviceFrame}
-            title={isMobileDeviceFrame ? 'Переключить в полный экран' : 'Показать как телефон 390px'}
-          >
-            {isMobileDeviceFrame ? <Smartphone size={16} /> : <Monitor size={16} />}
-            <span>{isMobileDeviceFrame ? '390 px' : 'Desktop'}</span>
-          </button>
-
-          <div style={{ position: 'relative', display: 'flex' }}>
+          {/* Предпросмотр «как на телефоне ученика» — инструмент администратора */}
+          {isGodmode && currentView !== 'godmode' && (
             <button
               type="button"
+              className="mz-device"
+              aria-pressed={isMobileDeviceFrame}
+              onClick={onToggleDeviceFrame}
+              title={isMobileDeviceFrame ? 'Вернуть полный экран' : 'Показать как на телефоне (390 px)'}
+            >
+              {isMobileDeviceFrame ? <Smartphone size={16} /> : <Monitor size={16} />}
+              <span>{isMobileDeviceFrame ? '390 px' : 'Desktop'}</span>
+            </button>
+          )}
+
+          <div className="mz-user-wrap">
+            <button
+              ref={menuButtonRef}
+              type="button"
               className="mz-user"
-              onClick={() => setUserMenuOpen(!userMenuOpen)}
+              onClick={() => setUserMenuOpen((v) => !v)}
               aria-haspopup="menu"
               aria-expanded={userMenuOpen}
             >
-              <div
-                className="mz-user__ava"
-                style={{ background: role === 'ADMIN' ? '#a04a84' : undefined, color: '#fff' }}
-              >
+              <span className={`mz-user__ava ${role === 'ADMIN' ? 'mz-user__ava--admin' : ''}`} aria-hidden="true">
                 {currentUser?.fullName?.charAt(0) || '?'}
-              </div>
-              <div className="mz-user__meta">
+              </span>
+              <span className="mz-user__meta">
                 <small>{(role && ROLE_LABEL[role]) || 'Гость'}</small>
                 <b>{currentUser?.fullName || 'Загрузка…'}</b>
-              </div>
+              </span>
             </button>
 
             {userMenuOpen && (
               <>
-                <div
-                  className="mz-backdrop"
-                  onClick={() => setUserMenuOpen(false)}
-                  aria-hidden="true"
-                />
-                <div className="mz-menu" role="menu">
+                <div className="mz-backdrop" onClick={() => setUserMenuOpen(false)} aria-hidden="true" />
+                <div className="mz-menu" role="menu" aria-label="Профиль">
                   <div className="mz-menu__head">
-                    <div className="mz-tag" style={{ marginBottom: 0 }}>
-                      {isGodmode ? 'Имперсонация / Профиль' : 'Текущий профиль'}
+                    <div className="mz-menu__who">
+                      <b>{currentUser?.fullName}</b>
+                      <small>
+                        {currentUser?.username ? `@${currentUser.username}` : currentUser?.email}
+                        {currentUser?.gradeLevel ? ` · ${currentUser.gradeLevel} класс` : ''}
+                      </small>
                     </div>
                     <button
                       type="button"
-                      className="mz-link"
+                      className="mz-icon-btn"
                       onClick={() => setUserMenuOpen(false)}
-                      style={{ marginLeft: 'auto', fontSize: 13, color: 'var(--text-soft)' }}
+                      aria-label="Закрыть меню"
                     >
-                      ✕
+                      <X size={16} />
                     </button>
                   </div>
 
-                  {isGodmode && availableUsers.length > 0 && (
-                    <div style={{ maxHeight: 280, overflowY: 'auto' }}>
-                      {availableUsers.map((u) => (
-                        <button
-                          key={u.id}
-                          type="button"
-                          role="menuitem"
-                          className="mz-menu__item"
-                          aria-current={u.id === currentUser?.id}
-                          onClick={() => {
-                            onSwitchUser(u.id);
-                            setUserMenuOpen(false);
-                          }}
-                        >
-                          <b>{u.fullName}</b>
-                          <small>
-                            {ROLE_LABEL[u.role] || u.role} · {getUserSubtitle(u)}
-                          </small>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-
-                  <div style={{ borderTop: '1px solid #e0e0e0', padding: '8px 12px', marginTop: 4 }}>
+                  {!isImpersonating && (
                     <button
                       type="button"
+                      role="menuitem"
+                      className="mz-menu__action"
                       onClick={() => {
                         setUserMenuOpen(false);
-                        if (onLogout) onLogout();
+                        setPasswordOpen(true);
                       }}
-                      className="mz-logout-btn"
                     >
-                      <LogOut size={15} />
-                      <span>Выйти из аккаунта</span>
+                      <KeyRound size={15} aria-hidden="true" />
+                      <span>Сменить пароль</span>
                     </button>
-                  </div>
+                  )}
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="mz-menu__action mz-menu__action--danger"
+                    onClick={() => {
+                      setUserMenuOpen(false);
+                      onLogout?.();
+                    }}
+                  >
+                    <LogOut size={15} aria-hidden="true" />
+                    <span>Выйти из аккаунта</span>
+                  </button>
                 </div>
               </>
             )}
@@ -264,7 +263,6 @@ export const NavigationHeader: React.FC<NavigationHeaderProps> = ({
       </header>
 
       <div className="mz-shell">
-        {/* Left rail (desktop) */}
         <nav className="mz-rail" aria-label="Режимы дня">
           {items.map((n) => (
             <button
@@ -281,13 +279,7 @@ export const NavigationHeader: React.FC<NavigationHeaderProps> = ({
           ))}
           <div className="mz-rail__spacer" />
           <div className="mz-rail__sep" />
-          <a
-            className="mz-nav"
-            href="https://mezon.uz/"
-            target="_blank"
-            rel="noopener noreferrer"
-            title="Сайт школы Mezon"
-          >
+          <a className="mz-nav" href="https://mezon.uz/" target="_blank" rel="noopener noreferrer" title="Сайт школы Mezon">
             <ExternalLink size={20} />
             Школа
             <small>mezon.uz</small>
@@ -297,21 +289,24 @@ export const NavigationHeader: React.FC<NavigationHeaderProps> = ({
         {children}
       </div>
 
-      {/* Bottom tabbar (mobile) */}
-      <nav className="mz-tabbar" aria-label="Режимы дня">
-        {items.map((n) => (
-          <button
-            key={n.view}
-            type="button"
-            className="mz-nav"
-            aria-current={currentView === n.view ? 'page' : undefined}
-            onClick={() => onViewChange(n.view)}
-          >
-            {n.icon}
-            {n.label}
-          </button>
-        ))}
-      </nav>
+      {items.length > 1 && (
+        <nav className="mz-tabbar" aria-label="Режимы дня">
+          {items.map((n) => (
+            <button
+              key={n.view}
+              type="button"
+              className="mz-nav"
+              aria-current={currentView === n.view ? 'page' : undefined}
+              onClick={() => onViewChange(n.view)}
+            >
+              {n.icon}
+              {n.label}
+            </button>
+          ))}
+        </nav>
+      )}
+
+      {passwordOpen && <ChangePasswordDialog onClose={() => setPasswordOpen(false)} />}
     </>
   );
 };

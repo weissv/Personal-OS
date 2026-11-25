@@ -19,24 +19,35 @@ export async function GET(req: NextRequest) {
     let studentId: string | null = null;
     let reason: 'NO_LINK' | 'NO_STUDENT' | null = null;
 
-    if (requested) {
+    // Родитель может быть связан с несколькими детьми — отдаём список для переключателя
+    const children =
+      ctx.user.role === Role.PARENT
+        ? (
+            await prisma.parentStudentLink.findMany({
+              where: { parentId: ctx.user.id },
+              orderBy: { createdAt: 'asc' },
+              select: { accessLevel: true, student: { select: { id: true, fullName: true, gradeLevel: true } } },
+            })
+          ).map((l) => ({ ...l.student, accessLevel: l.accessLevel }))
+        : [];
+
+    if (ctx.user.role === Role.PARENT) {
+      // Свой ребёнок виден в списке всегда (даже при закрытом доступе), чужой — никогда
+      const pick = requested ? children.find((c) => c.id === requested) : children[0];
+      if (requested && !pick) return denyResponse();
+      if (!pick) reason = 'NO_LINK';
+      studentId = pick?.id ?? null;
+    } else if (requested) {
       if (!(await canAccessStudent(ctx, requested, 'read'))) return denyResponse();
       studentId = requested;
     } else if (ctx.user.role === Role.STUDENT) {
       studentId = ctx.user.id;
-    } else if (ctx.user.role === Role.PARENT) {
-      const link = await prisma.parentStudentLink.findFirst({
-        where: { parentId: ctx.user.id },
-        orderBy: { createdAt: 'asc' },
-      });
-      if (!link) reason = 'NO_LINK';
-      studentId = link?.studentId ?? null;
     } else {
       reason = 'NO_STUDENT';
     }
 
     if (!studentId) {
-      return NextResponse.json({ sprint: null, student: null, currentWeekNumber: null, parentAccessLevel: 'REVOKED', reason });
+      return NextResponse.json({ sprint: null, student: null, children, currentWeekNumber: null, parentAccessLevel: 'REVOKED', reason });
     }
 
     const student = await prisma.user.findUnique({
@@ -62,6 +73,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({
       sprint,
       student,
+      children,
       currentWeekNumber: sprint ? getCurrentWeekNumber(sprint) : null,
       parentAccessLevel: parentLink?.accessLevel ?? ParentAccessLevel.REVOKED,
       reason: sprint ? null : 'NO_SPRINT',

@@ -12,7 +12,14 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Исторический архив прототипов UI — не участвует в сборке
+    "src/components/archive/**",
   ]),
+  {
+    // Node.js-скрипты эксплуатации и сиды — CommonJS
+    files: ["scripts/**/*.js", "prisma/**/*.js"],
+    rules: { "@typescript-eslint/no-require-imports": "off" },
+  },
 ]);
 
 export default eslintConfig;

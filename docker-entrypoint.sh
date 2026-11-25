@@ -9,7 +9,7 @@ if [ -n "$DATABASE_URL" ]; then
   echo "==> Synchronizing database schema with Prisma..."
   ./node_modules/prisma/build/index.js db push --accept-data-loss --skip-generate || echo "Warning: Prisma db push encountered an issue. Continuing..."
   echo "==> Applying database domain invariants (I3: Immutable Audit)..."
-  node scripts/apply-invariants.js || echo "Notice: Database invariants applied."
+  node scripts/apply-invariants.js || echo "WARNING: Invariant I3 (append-only audit) is NOT enforced — check database permissions."
   echo "==> Ensuring Somi Godmode account exists and is ready..."
   node scripts/ensure-admin.js &
 fi

@@ -81,3 +81,51 @@ export function cleanRole(v: unknown): Role | null {
 
 export const PASSWORD_HINT = 'Пароль — не менее 8 символов';
 export const USERNAME_HINT = 'Логин: 3–32 символа, латиница в нижнем регистре, цифры, точка, дефис, подчёркивание';
+
+/* --------------------------------------------------------------------------
+   Медиа-артефакты (фото конспектов и голосовые мысли)
+   -------------------------------------------------------------------------- */
+
+/** Белый список MIME-типов → расширение файла в хранилище. */
+export const MEDIA_TYPES: Record<string, string> = {
+  'image/webp': '.webp',
+  'image/jpeg': '.jpg',
+  'image/png': '.png',
+  'audio/webm': '.webm',
+  'audio/ogg': '.ogg',
+  'audio/mp4': '.m4a',
+  'audio/mpeg': '.mp3',
+};
+
+/** Расширение → Content-Type при отдаче файла. */
+export const MEDIA_CONTENT_TYPES: Record<string, string> = Object.fromEntries(
+  Object.entries(MEDIA_TYPES).map(([mime, ext]) => [ext, mime])
+);
+
+export const MAX_MEDIA_BYTES = 15 * 1024 * 1024;
+
+/** 'audio/webm;codecs=opus' → 'audio/webm' (если тип разрешён). */
+export function cleanMediaType(v: unknown): string | null {
+  if (typeof v !== 'string') return null;
+  const base = v.split(';')[0].trim().toLowerCase();
+  return base in MEDIA_TYPES ? base : null;
+}
+
+/** Имя файла для отображения: без путей и управляющих символов. */
+export function cleanFileName(v: unknown): string | null {
+  if (typeof v !== 'string') return null;
+  const base = v.split(/[/\\]/).pop() || '';
+  const s = base.replace(/[\u0000-\u001f\u007f"<>|]/g, '').trim().slice(0, 120);
+  return s || null;
+}
+
+export function cleanDayOfWeek(v: unknown, max = 7): number | null {
+  const n = typeof v === 'number' ? v : typeof v === 'string' && v.trim() !== '' ? Number(v) : NaN;
+  return Number.isInteger(n) && n >= 1 && n <= max ? n : null;
+}
+
+/** 'HH:MM' → минуты от полуночи. */
+export function timeToMinutes(t: string): number {
+  const [h, m] = t.split(':').map(Number);
+  return h * 60 + m;
+}

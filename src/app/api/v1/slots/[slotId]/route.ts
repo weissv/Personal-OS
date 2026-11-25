@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
-import { authenticate, canAccessStudent, denyResponse, notFoundResponse, studentIdForSlot } from '@/lib/auth';
+import { authenticate, canAccessStudent, denyResponse, handleApiError, notFoundResponse, studentIdForSlot } from '@/lib/auth';
 import { cleanSlotStatus, cleanText, cleanTime } from '@/lib/validation';
 import { validateSlotTransition } from '@/lib/slot-state-machine';
 
@@ -26,7 +26,7 @@ export async function PATCH(
     const body = await req.json().catch(() => ({}));
     const { startTime, endTime, title, taskGoal, deliverable, status, isGhost } = body;
 
-    let targetStatus = undefined;
+    let targetStatus: ReturnType<typeof cleanSlotStatus> | undefined = undefined;
     if (status !== undefined) {
       targetStatus = cleanSlotStatus(status);
       if (!targetStatus) {
@@ -44,9 +44,9 @@ export async function PATCH(
         ...(startTime !== undefined && { startTime: cleanTime(startTime) }),
         ...(endTime !== undefined && { endTime: cleanTime(endTime) }),
         ...(title !== undefined && { title: cleanText(title, 150, 1) || slot.title }),
-        ...(taskGoal !== undefined && { taskGoal: cleanText(taskGoal, 1000) }),
-        ...(deliverable !== undefined && { deliverable: cleanText(deliverable, 1000) }),
-        ...(targetStatus !== undefined && { status: targetStatus }),
+        ...(taskGoal !== undefined && { taskGoal: cleanText(taskGoal, 1000) || null }),
+        ...(deliverable !== undefined && { deliverable: cleanText(deliverable, 1000) || null }),
+        ...(targetStatus ? { status: targetStatus } : {}),
         ...(isGhost !== undefined && { isGhost: Boolean(isGhost) }),
       },
     });
@@ -56,8 +56,7 @@ export async function PATCH(
       slot: updated,
     });
   } catch (error) {
-    console.error('Update slot error:', error);
-    return NextResponse.json({ error: 'Failed to update slot' }, { status: 500 });
+    return handleApiError('slots/update', error, 'Не удалось обновить слот');
   }
 }
 
@@ -86,7 +85,6 @@ export async function DELETE(
       message: 'Слот удален',
     });
   } catch (error) {
-    console.error('Delete slot error:', error);
-    return NextResponse.json({ error: 'Failed to delete slot' }, { status: 500 });
+    return handleApiError('slots/delete', error, 'Не удалось удалить слот');
   }
 }

@@ -1,157 +1,123 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
+import { Role, SlotStatus } from '@prisma/client';
 import prisma from '@/lib/prisma';
-import { getCurrentUser, isUserGodmode, handleApiError } from '@/lib/auth';
+import { authenticate, handleApiError } from '@/lib/auth';
+import { pickActiveSprint, todayUTC } from '@/lib/sprint';
 
+const pct = (part: number, total: number) => (total > 0 ? Math.round((part / total) * 100) : 0);
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
-    const user = await getCurrentUser();
-    if (!user || !isUserGodmode(user)) {
-      return NextResponse.json({ error: 'Access denied: Godmode/Admin required' }, { status: 403 });
-    }
+    const auth = await authenticate({ admin: true }, req);
+    if (!auth.ok) return auth.response;
 
-    // Role breakdown
-    const [studentsCount, mentorsCount, parentsCount, adminsCount] = await Promise.all([
-      prisma.user.count({ where: { role: 'STUDENT' } }),
-      prisma.user.count({ where: { role: 'MENTOR' } }),
-      prisma.user.count({ where: { role: 'PARENT' } }),
-      prisma.user.count({ where: { role: 'ADMIN' } }),
+    const today = todayUTC();
+
+    const [roleGroups, gradeGroups, statusGroups, sprintsTotal, weeksTotal, submittedRetrosTotal] = await Promise.all([
+      prisma.user.groupBy({ by: ['role'], _count: { _all: true } }),
+      prisma.user.groupBy({ by: ['gradeLevel'], where: { role: Role.STUDENT }, _count: { _all: true } }),
+      prisma.daySlot.groupBy({ by: ['status'], where: { isGhost: false }, _count: { _all: true } }),
+      prisma.sprint.count(),
+      prisma.week.count(),
+      prisma.week.count({ where: { isSubmitted: true } }),
     ]);
 
-    // Cohorts
-    const [grade8Count, grade9Count, grade10Count, grade11Count] = await Promise.all([
-      prisma.user.count({ where: { role: 'STUDENT', gradeLevel: 8 } }),
-      prisma.user.count({ where: { role: 'STUDENT', gradeLevel: 9 } }),
-      prisma.user.count({ where: { role: 'STUDENT', gradeLevel: 10 } }),
-      prisma.user.count({ where: { role: 'STUDENT', gradeLevel: 11 } }),
-    ]);
+    const byRole = (r: Role) => roleGroups.find((g) => g.role === r)?._count._all ?? 0;
+    const byGrade = (g: number) => gradeGroups.find((x) => x.gradeLevel === g)?._count._all ?? 0;
+    const byStatus = (s: SlotStatus) => statusGroups.find((x) => x.status === s)?._count._all ?? 0;
 
-    // Sprints & Weeks
-    const sprintsTotal = await prisma.sprint.count();
-    const weeksTotal = await prisma.week.count();
-    const submittedRetrosTotal = await prisma.week.count({ where: { isSubmitted: true } });
+    const slotsTotal = statusGroups.reduce((sum, g) => sum + g._count._all, 0);
+    const done = byStatus(SlotStatus.DONE);
+    const migrated = byStatus(SlotStatus.MIGRATED);
 
-    // Slots aggregation
-    const slots = await prisma.daySlot.findMany({
-      where: { isGhost: false },
-      select: {
-        status: true,
-        type: true,
-      },
-    });
-
-    const totalActiveSlots = slots.length;
-    const doneSlots = slots.filter((s) => s.status === 'DONE').length;
-    const migratedSlots = slots.filter((s) => s.status === 'MIGRATED').length;
-    const droppedSlots = slots.filter((s) => s.status === 'DROPPED').length;
-    const pendingSlots = slots.filter((s) => s.status === 'PENDING').length;
-
-    const completionRate = totalActiveSlots > 0 ? Math.round((doneSlots / totalActiveSlots) * 100) : 0;
-    const migrationRate = totalActiveSlots > 0 ? Math.round((migratedSlots / totalActiveSlots) * 100) : 0;
-
-    // Red flag / at-risk audit: analyze student velocity
+    // Зона риска: по активному спринту каждого ученика и только по уже прошедшим неделям
     const students = await prisma.user.findMany({
-      where: { role: 'STUDENT' },
-      include: {
+      where: { role: Role.STUDENT, isActive: true },
+      select: {
+        id: true,
+        fullName: true,
+        gradeLevel: true,
+        email: true,
+        username: true,
         sprints: {
-          include: {
+          select: {
+            startDate: true,
+            endDate: true,
             weeks: {
-              include: {
-                days: {
-                  include: {
-                    slots: true,
-                  },
-                },
-                mentorReview: true,
+              select: {
+                weekNumber: true,
+                endDate: true,
+                isSubmitted: true,
+                days: { select: { dayOfWeek: true, slots: { where: { isGhost: false }, select: { status: true } } } },
               },
             },
           },
         },
       },
+      orderBy: { fullName: 'asc' },
     });
 
     const atRiskStudents = [];
-
     for (const st of students) {
-      const activeSprint = st.sprints[0];
-      if (!activeSprint) continue;
+      const sprint = pickActiveSprint(st.sprints, today);
+      if (!sprint) continue;
 
-      let studentTotalSlots = 0;
-      let studentMigratedSlots = 0;
-      let unsubmittedWeeks = 0;
-      let emptySelfStudy = 0;
+      let total = 0;
+      let migratedCount = 0;
+      let overdueRetros = 0;
+      let emptySaturdays = 0;
 
-      for (const w of activeSprint.weeks) {
-        if (!w.isSubmitted && w.weekNumber <= 3) {
-          unsubmittedWeeks++;
-        }
+      for (const w of sprint.weeks) {
+        const isOver = w.endDate < today;
+        if (isOver && !w.isSubmitted) overdueRetros++;
         for (const d of w.days) {
-          const nonGhost = d.slots.filter((s) => !s.isGhost);
-          studentTotalSlots += nonGhost.length;
-          studentMigratedSlots += nonGhost.filter((s) => s.status === 'MIGRATED').length;
-
-          if (d.dayOfWeek === 6 && nonGhost.length === 0) {
-            emptySelfStudy++;
-          }
+          total += d.slots.length;
+          migratedCount += d.slots.filter((s) => s.status === SlotStatus.MIGRATED).length;
+          if (isOver && d.dayOfWeek === 6 && d.slots.length === 0) emptySaturdays++;
         }
       }
 
-      const migPct = studentTotalSlots > 0 ? Math.round((studentMigratedSlots / studentTotalSlots) * 100) : 0;
+      const migrationRate = pct(migratedCount, total);
       const flags: string[] = [];
+      if (total >= 5 && migrationRate >= 35) flags.push(`Высокий перенос задач: ${migrationRate}%`);
+      if (overdueRetros > 0) flags.push(`Не сдано ретро: ${overdueRetros} нед.`);
+      if (emptySaturdays > 1) flags.push(`Пустая суббота: ${emptySaturdays} нед.`);
 
-      if (migPct >= 35) {
-        flags.push(`Высокий перенос задач: ${migPct}%`);
-      }
-      if (unsubmittedWeeks > 0) {
-        flags.push(`Просрочено ретро: ${unsubmittedWeeks} нед.`);
-      }
-      if (emptySelfStudy > 1) {
-        flags.push(`Пустая суббота: ${emptySelfStudy} раз(а)`);
-      }
-
-      if (flags.length > 0) {
+      if (flags.length) {
         atRiskStudents.push({
           id: st.id,
           fullName: st.fullName,
-          gradeLevel: st.gradeLevel || 9,
+          gradeLevel: st.gradeLevel,
           email: st.email,
           username: st.username,
-          migrationRate: migPct,
+          migrationRate,
           flags,
         });
       }
     }
 
+    const users = {
+      students: byRole(Role.STUDENT),
+      mentors: byRole(Role.MENTOR),
+      parents: byRole(Role.PARENT),
+      admins: byRole(Role.ADMIN),
+    };
+
     return NextResponse.json({
       success: true,
       stats: {
-        users: {
-          students: studentsCount,
-          mentors: mentorsCount,
-          parents: parentsCount,
-          admins: adminsCount,
-          total: studentsCount + mentorsCount + parentsCount + adminsCount,
-        },
-        cohorts: {
-          grade8: grade8Count,
-          grade9: grade9Count,
-          grade10: grade10Count,
-          grade11: grade11Count,
-        },
+        users: { ...users, total: users.students + users.mentors + users.parents + users.admins },
+        cohorts: { grade8: byGrade(8), grade9: byGrade(9), grade10: byGrade(10), grade11: byGrade(11) },
         slots: {
-          total: totalActiveSlots,
-          done: doneSlots,
-          migrated: migratedSlots,
-          dropped: droppedSlots,
-          pending: pendingSlots,
-          completionRate,
-          migrationRate,
+          total: slotsTotal,
+          done,
+          migrated,
+          dropped: byStatus(SlotStatus.DROPPED),
+          pending: byStatus(SlotStatus.PENDING),
+          completionRate: pct(done, slotsTotal),
+          migrationRate: pct(migrated, slotsTotal),
         },
-        sprints: {
-          total: sprintsTotal,
-          weeksTotal,
-          submittedRetrosTotal,
-        },
+        sprints: { total: sprintsTotal, weeksTotal, submittedRetrosTotal },
         atRiskStudents,
       },
     });

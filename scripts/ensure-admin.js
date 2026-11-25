@@ -1,4 +1,3 @@
-const path = require('path');
 const crypto = require('crypto');
 const { PrismaClient, Role } = require('@prisma/client');
 
@@ -10,13 +9,30 @@ function hashPassword(password) {
   return `${salt}:${hash}`;
 }
 
+// Криптостойкий генератор (Math.random() для паролей непригоден)
 function generateRandomSecurePassword(prefix = 'Mz') {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%';
+  const bytes = crypto.randomBytes(10);
   let rand = '';
-  for (let i = 0; i < 8; i++) {
-    rand += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
+  for (let i = 0; i < bytes.length; i++) rand += chars[bytes[i] % chars.length];
   return `${prefix}!${rand}`;
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const TASHKENT_OFFSET_MS = 5 * 60 * 60 * 1000;
+
+/** Понедельник текущей недели по календарю Ташкента (полночь UTC, как в src/lib/sprint.ts). */
+function tashkentMonday() {
+  const t = new Date(Date.now() + TASHKENT_OFFSET_MS);
+  const today = Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), t.getUTCDate());
+  const dow = t.getUTCDay() === 0 ? 7 : t.getUTCDay();
+  return new Date(today - (dow - 1) * DAY_MS);
+}
+
+function academicYearLabel(d) {
+  const y = d.getUTCFullYear();
+  const start = d.getUTCMonth() >= 7 ? y : y - 1;
+  return `${start}-${start + 1}`;
 }
 
 const timetableData = require('./timetable_data.json');
@@ -73,13 +89,10 @@ async function main() {
 
   let somi;
   if (existingAdmin) {
+    // Главный админ всегда должен иметь доступ; имя, пароль и прочее не трогаем
     somi = await prisma.user.update({
       where: { id: existingAdmin.id },
-      data: {
-        role: Role.ADMIN,
-        fullName: 'Somi (Founder · Godmode)',
-        isActive: true,
-      },
+      data: { role: Role.ADMIN, isActive: true },
     });
     console.log(`✓ Admin Godmode preserved: ${somi.fullName} (@${somi.username})`);
   } else {
@@ -91,7 +104,7 @@ async function main() {
         email: adminEmail,
         passwordHash: somiPasswordHash,
         role: Role.ADMIN,
-        fullName: 'Somi (Founder · Godmode)',
+        fullName: 'Somi',
         isActive: true,
       },
     });
@@ -101,23 +114,24 @@ async function main() {
     }
   }
 
+  // Начальный состав (кураторы и ученики) засевается только в пустую школу.
+  // Дальше пользователями управляет администратор: удалённый или отключённый ученик
+  // не должен «воскресать» при каждом перезапуске контейнера.
+  const rosterCount = await prisma.user.count({ where: { role: { in: [Role.STUDENT, Role.MENTOR] } } });
+  const seedRoster = process.env.SEED_ON_START !== 'false' && rosterCount === 0;
+  if (!seedRoster) console.log('✓ Roster already bootstrapped — users are managed in Godmode');
+  const rosterCurators = seedRoster ? curators : [];
+  const rosterStudents = seedRoster ? students : [];
+
   // 2. Ensure Curators (preserves existing password hashes!)
-  for (const c of curators) {
+  for (const c of rosterCurators) {
     const existing = await prisma.user.findFirst({
       where: { OR: [{ email: c.email }, { username: c.username }] },
     });
 
     if (existing) {
-      const curatorUser = await prisma.user.update({
-        where: { id: existing.id },
-        data: {
-          fullName: c.fullName,
-          role: c.role,
-          gradeLevel: c.gradeLevel,
-          isActive: true,
-        },
-      });
-      console.log(`✓ Curator verified: ${curatorUser.fullName} (@${curatorUser.username}, ${curatorUser.gradeLevel} класс)`);
+      // Не перезаписываем правки администратора и не включаем отключённые аккаунты
+      console.log(`✓ Curator present: ${existing.fullName} (@${existing.username})`);
     } else {
       const initialPassword = process.env.SEED_DEFAULT_PASSWORD || generateRandomSecurePassword(c.defaultPasswordPrefix);
       const curatorUser = await prisma.user.create({
@@ -136,22 +150,12 @@ async function main() {
   }
 
   // 3. Ensure Students (preserves existing password hashes!)
-  for (const st of students) {
+  for (const st of rosterStudents) {
     const existing = await prisma.user.findFirst({
       where: { OR: [{ email: st.email }, { username: st.username }] },
     });
 
-    if (existing) {
-      await prisma.user.update({
-        where: { id: existing.id },
-        data: {
-          fullName: st.fullName,
-          role: Role.STUDENT,
-          gradeLevel: st.gradeLevel,
-          isActive: true,
-        },
-      });
-    } else {
+    if (!existing) {
       const initialPassword = process.env.SEED_DEFAULT_PASSWORD || generateRandomSecurePassword(st.defaultPasswordPrefix);
       await prisma.user.create({
         data: {
@@ -166,15 +170,15 @@ async function main() {
       });
     }
   }
-  console.log(`✓ Verified ${students.length} students in database`);
+  console.log(`✓ Seeded ${rosterStudents.length} students`);
 
-  // 4. Synchronize TimetableSlot templates
-  await prisma.timetableSlot.deleteMany({
-    where: { gradeLevel: { in: [8, 9] } },
-  });
-
+  // 4. Шаблон расписания: засеваем только пустые параллели.
+  // Правки администратора (Godmode → Расписание) переживают перезапуск контейнера;
+  // полная пересборка из MIS — явной кнопкой «Синхронизировать из MIS».
   const slotsToCreate = [];
-  for (const grade of [8, 9]) {
+  for (const grade of Object.keys(timetableData).map(Number)) {
+    const existingCount = await prisma.timetableSlot.count({ where: { gradeLevel: grade } });
+    if (existingCount > 0) continue;
     const gSlots = timetableData[String(grade)] || [];
     for (const s of gSlots) {
       slotsToCreate.push({
@@ -188,19 +192,16 @@ async function main() {
     }
   }
 
-  await prisma.timetableSlot.createMany({ data: slotsToCreate });
-  console.log(`✓ Synchronized ${slotsToCreate.length} timetable template slots (8 & 9 классы)`);
+  if (slotsToCreate.length) await prisma.timetableSlot.createMany({ data: slotsToCreate });
+  console.log(`✓ Timetable template: ${slotsToCreate.length} slots seeded (existing grades preserved)`);
 
   // 5. Populate Sprint Weeks and DaySlots for each student
-  const now = new Date();
-  const currentYear = now.getFullYear();
-  const dayOfWeek = now.getDay() === 0 ? 7 : now.getDay();
-  const sprintStart = new Date(now.getTime() - (dayOfWeek - 1) * 24 * 60 * 60 * 1000);
-  sprintStart.setHours(0, 0, 0, 0);
+  const sprintStart = tashkentMonday();
+  const yearLabel = academicYearLabel(sprintStart);
 
   const daySlotsToBatch = [];
 
-  for (const st of students) {
+  for (const st of rosterStudents) {
     const user = await prisma.user.findUnique({ where: { username: st.username } });
     if (!user) continue;
 
@@ -217,13 +218,16 @@ async function main() {
       },
     });
 
-    if (!sprint) {
+    // Уроки раскладываются только в только что созданный спринт: если ученик
+    // удалил урок из своего дня, перезапуск сервера не должен вернуть его обратно.
+    if (sprint) continue;
+    {
       sprint = await prisma.sprint.create({
         data: {
           studentId: user.id,
-          title: `1 четверть ${currentYear}-${currentYear + 1} (${st.gradeLevel} класс)`,
+          title: `1 четверть ${yearLabel} (${st.gradeLevel} класс)`,
           startDate: sprintStart,
-          endDate: new Date(sprintStart.getTime() + 10 * 7 * 24 * 60 * 60 * 1000 - 1),
+          endDate: new Date(sprintStart.getTime() + (10 * 7 - 1) * DAY_MS),
           weeksTotal: 10,
         },
       });

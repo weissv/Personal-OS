@@ -1,12 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
-import { authenticate } from '@/lib/auth';
+import { attachSessionCookie, authenticate, handleApiError, issueSessionToken } from '@/lib/auth';
 import { hashPassword, verifyPassword } from '@/lib/password';
 import { cleanPassword, PASSWORD_HINT } from '@/lib/validation';
 import { audit } from '@/lib/audit';
 import { rateLimit } from '@/lib/rate-limit';
 
-/** Смена собственного пароля. Недоступна в режиме имперсонации. */
+/**
+ * Смена собственного пароля. Недоступна в режиме имперсонации.
+ * Все остальные сессии пользователя отзываются; текущая перевыпускается.
+ */
 export async function POST(req: NextRequest) {
   try {
     const auth = await authenticate({}, req);
@@ -33,9 +36,10 @@ export async function POST(req: NextRequest) {
 
     await prisma.user.update({ where: { id: record.id }, data: { passwordHash: hashPassword(next) } });
     await audit({ actorId: record.id, actorName: record.fullName, action: 'PASSWORD_CHANGED', targetType: 'USER', targetId: record.id });
-    return NextResponse.json({ success: true });
+
+    const token = await issueSessionToken(record.id);
+    return attachSessionCookie(NextResponse.json({ success: true, token }), token, req);
   } catch (error) {
-    console.error('Change password error:', error);
-    return NextResponse.json({ error: 'Внутренняя ошибка сервера' }, { status: 500 });
+    return handleApiError('auth/password', error);
   }
 }

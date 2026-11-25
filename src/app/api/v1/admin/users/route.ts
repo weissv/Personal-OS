@@ -1,61 +1,52 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { ParentAccessLevel, Prisma, Role } from '@prisma/client';
 import prisma from '@/lib/prisma';
-import { authenticate, sanitizeUser } from '@/lib/auth';
+import { authenticate, badRequest, handleApiError, sanitizeUser } from '@/lib/auth';
 import { hashPassword } from '@/lib/password';
-import { Role, ParentAccessLevel } from '@prisma/client';
-import { cleanEmail, cleanGrade, cleanName, cleanPassword, cleanUsername, PASSWORD_HINT, USERNAME_HINT } from '@/lib/validation';
-import { generateSprintForStudent, todayUTC, mondayOnOrBefore } from '@/lib/sprint';
-import { audit } from '@/lib/audit';
+import {
+  cleanEmail,
+  cleanGrade,
+  cleanName,
+  cleanParentAccessLevel,
+  cleanPassword,
+  cleanRole,
+  cleanUsername,
+  PASSWORD_HINT,
+  USERNAME_HINT,
+} from '@/lib/validation';
+import { defaultSprintForNewStudent, generateSprintForStudent } from '@/lib/sprint';
+import { audit, auditActor } from '@/lib/audit';
 
-
-// GET /api/v1/admin/users
+// GET /api/v1/admin/users?role=STUDENT&search=...
 export async function GET(req: NextRequest) {
   try {
     const auth = await authenticate({ admin: true }, req);
     if (!auth.ok) return auth.response;
 
     const { searchParams } = new URL(req.url);
-    const roleFilter = searchParams.get('role');
-    const search = searchParams.get('search');
+    const role = cleanRole(searchParams.get('role'));
+    const search = searchParams.get('search')?.trim().slice(0, 100);
 
-    const where: any = {};
-    if (roleFilter && ['STUDENT', 'MENTOR', 'PARENT', 'ADMIN'].includes(roleFilter)) {
-      where.role = roleFilter;
-    }
-    if (search && search.trim()) {
-      const q = search.trim();
-      where.OR = [
-        { fullName: { contains: q, mode: 'insensitive' } },
-        { username: { contains: q, mode: 'insensitive' } },
-        { email: { contains: q, mode: 'insensitive' } },
-      ];
-    }
+    const where: Prisma.UserWhereInput = {
+      ...(role ? { role } : {}),
+      ...(search
+        ? {
+            OR: [
+              { fullName: { contains: search, mode: 'insensitive' } },
+              { username: { contains: search, mode: 'insensitive' } },
+              { email: { contains: search, mode: 'insensitive' } },
+            ],
+          }
+        : {}),
+    };
 
     const users = await prisma.user.findMany({
       where,
       orderBy: [{ role: 'asc' }, { fullName: 'asc' }],
       include: {
-        sprints: {
-          select: {
-            id: true,
-            title: true,
-            weeksTotal: true,
-          },
-        },
-        parentLinks: {
-          include: {
-            parent: {
-              select: { id: true, fullName: true, email: true },
-            },
-          },
-        },
-        studentLinks: {
-          include: {
-            student: {
-              select: { id: true, fullName: true, email: true },
-            },
-          },
-        },
+        sprints: { select: { id: true, title: true, weeksTotal: true } },
+        parentLinks: { include: { parent: { select: { id: true, fullName: true, email: true } } } },
+        studentLinks: { include: { student: { select: { id: true, fullName: true, email: true } } } },
       },
     });
 
@@ -70,117 +61,88 @@ export async function GET(req: NextRequest) {
       })),
     });
   } catch (error) {
-    console.error('Failed to list users:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    return handleApiError('admin/users:list', error);
   }
 }
 
-// POST /api/v1/admin/users
+// POST /api/v1/admin/users — регистрация участника (ученику сразу генерируется спринт)
 export async function POST(req: NextRequest) {
   try {
     const auth = await authenticate({ admin: true }, req);
     if (!auth.ok) return auth.response;
-    const admin = auth.ctx.user;
 
     const body = await req.json().catch(() => ({}));
-    const rawFullName = cleanName(body.fullName);
-    const rawUsername = cleanUsername(body.username);
-    const rawEmail = cleanEmail(body.email);
-    const rawPassword = cleanPassword(body.password);
-    const roleInput = String(body.role || 'STUDENT').toUpperCase();
-    const gradeLevel = cleanGrade(body.gradeLevel) || (roleInput === 'STUDENT' ? 9 : null);
-    const studentId = body.studentId ? String(body.studentId).trim() : null;
-    const accessLevelInput = String(body.accessLevel || 'SUMMARY_ONLY');
+    const fullName = cleanName(body.fullName);
+    const username = cleanUsername(body.username);
+    const email = cleanEmail(body.email);
+    const password = cleanPassword(body.password);
+    const role = cleanRole(body.role ?? 'STUDENT');
 
-    if (!rawFullName) {
-      return NextResponse.json({ error: 'Укажите корректное ФИО (от 2 до 100 символов)' }, { status: 400 });
-    }
-    if (!rawUsername) {
-      return NextResponse.json({ error: USERNAME_HINT }, { status: 400 });
-    }
-    if (!rawEmail) {
-      return NextResponse.json({ error: 'Укажите корректный адрес электронной почты' }, { status: 400 });
-    }
-    if (!rawPassword) {
-      return NextResponse.json({ error: PASSWORD_HINT }, { status: 400 });
-    }
-    if (!['STUDENT', 'MENTOR', 'PARENT', 'ADMIN'].includes(roleInput)) {
-      return NextResponse.json({ error: 'Недопустимая роль пользователя' }, { status: 400 });
+    if (!fullName) return badRequest('Укажите корректное ФИО (от 2 до 100 символов)');
+    if (!username) return badRequest(USERNAME_HINT);
+    if (!email) return badRequest('Укажите корректный адрес электронной почты');
+    if (!password) return badRequest(PASSWORD_HINT);
+    if (!role) return badRequest('Недопустимая роль пользователя');
+
+    const needsGrade = role === Role.STUDENT || role === Role.MENTOR;
+    const gradeLevel = needsGrade ? cleanGrade(body.gradeLevel) : null;
+    if (role === Role.STUDENT && !gradeLevel) return badRequest('Укажите класс ученика');
+
+    // Родитель: привязка к ученику (необязательна, но если указана — должна быть корректной)
+    const studentId = role === Role.PARENT && typeof body.studentId === 'string' && body.studentId ? body.studentId : null;
+    const accessLevel = cleanParentAccessLevel(body.accessLevel) ?? ParentAccessLevel.SUMMARY_ONLY;
+    if (studentId) {
+      const student = await prisma.user.findUnique({ where: { id: studentId }, select: { role: true } });
+      if (!student || student.role !== Role.STUDENT) return badRequest('Выбранный ученик не найден');
     }
 
-    // Check unique username & email
-    const existing = await prisma.user.findFirst({
-      where: {
-        OR: [{ username: rawUsername }, { email: rawEmail }],
-      },
-    });
-
+    const existing = await prisma.user.findFirst({ where: { OR: [{ username }, { email }] } });
     if (existing) {
-      return NextResponse.json(
-        { error: 'Пользователь с таким логином или email уже существует' },
-        { status: 409 }
-      );
+      return NextResponse.json({ error: 'Пользователь с таким логином или email уже существует' }, { status: 409 });
     }
-
-    const passwordHash = hashPassword(rawPassword);
 
     const newUser = await prisma.user.create({
       data: {
-        fullName: rawFullName,
-        username: rawUsername,
-        email: rawEmail,
-        passwordHash,
-        role: roleInput as Role,
-        gradeLevel: roleInput === 'STUDENT' || roleInput === 'MENTOR' ? gradeLevel : null,
+        fullName,
+        username,
+        email,
+        passwordHash: hashPassword(password),
+        role,
+        gradeLevel,
+        ...(studentId ? { studentLinks: { create: { studentId, accessLevel } } } : {}),
       },
     });
 
-    // If role is PARENT and studentId is provided, link to student
-    if (roleInput === 'PARENT' && studentId) {
-      const student = await prisma.user.findUnique({ where: { id: studentId } });
-      if (student && student.role === Role.STUDENT) {
-        await prisma.parentStudentLink.create({
-          data: {
-            studentId,
-            parentId: newUser.id,
-            accessLevel: accessLevelInput === 'FULL_ACCESS' ? ParentAccessLevel.FULL_ACCESS : ParentAccessLevel.SUMMARY_ONLY,
-          },
-        });
+    let sprintInfo: Awaited<ReturnType<typeof generateSprintForStudent>> | null = null;
+    if (role === Role.STUDENT) {
+      try {
+        const plan = await defaultSprintForNewStudent(gradeLevel);
+        sprintInfo = await generateSprintForStudent({ studentId: newUser.id, gradeLevel, ...plan });
+      } catch (e) {
+        // Без спринта ученик бесполезен: откатываем создание, чтобы не оставлять «полуаккаунт»
+        await prisma.user.delete({ where: { id: newUser.id } }).catch(() => undefined);
+        throw e;
       }
     }
 
-    // If role is STUDENT, automatically generate 10-week sprint using sprint generator
-    if (roleInput === 'STUDENT') {
-      const currentYear = new Date().getFullYear();
-      const sprintTitle = `1 четверть ${currentYear}-${currentYear + 1} (${gradeLevel} класс)`;
-      const startDate = mondayOnOrBefore(todayUTC());
-
-      await generateSprintForStudent({
-        studentId: newUser.id,
-        gradeLevel,
-        title: sprintTitle,
-        startDate,
-        weeksTotal: 10,
-      });
-    }
-
     await audit({
-      actorId: admin.id,
-      actorName: admin.fullName,
+      ...auditActor(auth.ctx),
       action: 'USER_CREATED',
       targetType: 'USER',
       targetId: newUser.id,
       targetName: newUser.fullName,
-      details: `Создан пользователь ${newUser.fullName} (@${newUser.username}, роль: ${newUser.role})`,
+      details: `Создан пользователь ${newUser.fullName} (@${newUser.username}, роль: ${newUser.role}${
+        gradeLevel ? `, ${gradeLevel} класс` : ''
+      })`,
     });
 
     return NextResponse.json({
       success: true,
       user: sanitizeUser(newUser),
+      sprint: sprintInfo,
       message: `Пользователь ${newUser.fullName} успешно зарегистрирован`,
     });
   } catch (error) {
-    console.error('Failed to create user:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    return handleApiError('admin/users:create', error, 'Не удалось создать пользователя');
   }
 }

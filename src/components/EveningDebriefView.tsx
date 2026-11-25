@@ -1,33 +1,34 @@
 'use client';
 
-import React, { useState, useRef } from 'react';
-import { CheckCircle2, ArrowRightLeft, XCircle, Camera, Mic, Square, Play, Pause, Upload, Check, Maximize2 } from 'lucide-react';
-import { ViewHero, Notice, InlineAlert } from '@/components/ui';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  CheckCircle2,
+  ArrowRightLeft,
+  XCircle,
+  Camera,
+  Mic,
+  Square,
+  Play,
+  Pause,
+  Upload,
+  Check,
+  Maximize2,
+  RotateCcw,
+  CalendarX2,
+} from 'lucide-react';
+import { ViewHero, Notice, InlineAlert, EmptyState } from '@/components/ui';
 import { processImageForUpload, AudioCapturePipeline, uploadMediaWithPresignedUrl } from '@/lib/media-processor';
-import { MediaPreviewModal, getSafeMediaUrl } from './MediaPreviewModal';
+import { apiFetch, mediaUrl } from '@/lib/api-client';
+import { plural } from '@/lib/school-time';
+import type { DaySlot, MediaAsset } from '@/lib/types';
+import { MediaPreviewModal } from './MediaPreviewModal';
 
-interface DaySlot {
-  id: string;
-  dayId: string;
-  startTime: string | null;
-  endTime: string | null;
-  title: string;
-  type: string;
-  isGhost: boolean;
-  taskGoal: string | null;
-  deliverable: string | null;
-  status: string;
-  orderIndex: number;
-}
+type Status = 'PENDING' | 'DONE' | 'MIGRATED' | 'DROPPED';
+type MigrationTarget = 'tomorrow' | 'saturday';
 
-interface MediaAsset {
-  id: string;
-  fileUrl: string;
-  fileType: string;
-  fileName: string;
-  fileSize: number;
-  note: string | null;
-  createdAt: string;
+interface Decision {
+  status: Status;
+  migrationTarget?: MigrationTarget;
 }
 
 interface EveningDebriefViewProps {
@@ -42,6 +43,22 @@ interface EveningDebriefViewProps {
   onNavigateToMorning?: () => void;
 }
 
+const STATUS_LABEL: Record<Status, string> = {
+  PENDING: 'Ждёт решения',
+  DONE: 'Готово',
+  MIGRATED: 'Перенесено',
+  DROPPED: 'Отменено',
+};
+const STATUS_CHIP: Record<Status, string> = {
+  PENDING: 'mz-chip--outline',
+  DONE: 'mz-chip--teal',
+  MIGRATED: 'mz-chip--lav',
+  DROPPED: 'mz-chip--error',
+};
+const MAX_PHOTO_BYTES = 15 * 1024 * 1024;
+
+const kb = (bytes: number) => `${Math.max(1, Math.round(bytes / 1024))} KB`;
+
 export const EveningDebriefView: React.FC<EveningDebriefViewProps> = ({
   dayId,
   weekId,
@@ -53,225 +70,230 @@ export const EveningDebriefView: React.FC<EveningDebriefViewProps> = ({
   onSlotUpdated,
   onNavigateToMorning,
 }) => {
-  const [slotStatusMap, setSlotStatusMap] = useState<
-    Record<string, { status: string; deliverable?: string; taskGoal?: string; migrationTarget?: string }>
-  >(() => {
-    const map: Record<string, { status: string; deliverable?: string; taskGoal?: string }> = {};
-    slots.forEach((s) => {
-      map[s.id] = {
-        status: s.status,
-        deliverable: s.deliverable || '',
-        taskGoal: s.taskGoal || '',
-      };
-    });
-    return map;
-  });
-
-  // Inline migration target selector state (Cooper: In-Place control, no modal)
+  // Решения по слотам — локально до «Завершить день» (одна транзакция). Компонент
+  // пересоздаётся при смене дня (key), поэтому состояние не «перетекает» между днями.
+  const [decisions, setDecisions] = useState<Record<string, Decision>>(() =>
+    Object.fromEntries(slots.map((s) => [s.id, { status: s.status as Status }]))
+  );
   const [migratingSlotId, setMigratingSlotId] = useState<string | null>(null);
 
-  // Media capture state
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isCompressingImage, setIsCompressingImage] = useState(false);
-  const [compressionStats, setCompressionStats] = useState<{
-    originalSize: number;
-    compressedSize: number;
-    ratio: number;
-  } | null>(null);
+  const [compressionStats, setCompressionStats] = useState<{ originalSize: number; compressedSize: number; ratio: number } | null>(null);
 
-  // Audio recording state
   const [isRecordingAudio, setIsRecordingAudio] = useState(false);
   const [secondsRemaining, setSecondsRemaining] = useState(120);
   const [audioPipeline] = useState(() => new AudioCapturePipeline());
-  const [recordedAudioPreview, setRecordedAudioPreview] = useState<{
-    blob: Blob;
-    url: string;
-    duration: number;
-  } | null>(null);
+  const [recordedAudio, setRecordedAudio] = useState<{ blob: Blob; url: string; duration: number } | null>(null);
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
   const audioPlayerRef = useRef<HTMLAudioElement>(null);
 
   const [isUploadingMedia, setIsUploadingMedia] = useState(false);
   const [mediaNoteInput, setMediaNoteInput] = useState('');
+  const [mediaError, setMediaError] = useState<string | null>(null);
   const [isBatchSyncing, setIsBatchSyncing] = useState(false);
   const [syncSuccessMessage, setSyncSuccessMessage] = useState<string | null>(null);
   const [syncErrorMessage, setSyncErrorMessage] = useState<string | null>(null);
   const [selectedMediaAsset, setSelectedMediaAsset] = useState<MediaAsset | null>(null);
   const [failedImageIds, setFailedImageIds] = useState<Set<string>>(() => new Set());
 
-  // Counts
-  const totalSlots = slots.length;
-  const doneCount = Object.values(slotStatusMap).filter((s) => s.status === 'DONE').length;
-  const migratedCount = Object.values(slotStatusMap).filter((s) => s.status === 'MIGRATED').length;
-  const droppedCount = Object.values(slotStatusMap).filter((s) => s.status === 'DROPPED').length;
+  // Освобождаем микрофон и blob-URL при уходе с экрана
+  useEffect(() => () => audioPipeline.cancel(), [audioPipeline]);
+  useEffect(() => {
+    const url = recordedAudio?.url;
+    return () => {
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [recordedAudio]);
 
-  const handleSetStatus = (slotId: string, status: string) => {
+  const original = useMemo(() => new Map(slots.map((s) => [s.id, s.status as Status])), [slots]);
+  const changed = useMemo(
+    () => slots.filter((s) => decisions[s.id] && decisions[s.id].status !== original.get(s.id)),
+    [slots, decisions, original]
+  );
+
+  const counts = useMemo(() => {
+    const c = { DONE: 0, MIGRATED: 0, DROPPED: 0, PENDING: 0 } as Record<Status, number>;
+    for (const s of slots) c[decisions[s.id]?.status ?? (s.status as Status)]++;
+    return c;
+  }, [slots, decisions]);
+  const totalSlots = slots.length;
+  const pct = (n: number) => (totalSlots > 0 ? (n / totalSlots) * 100 : 0);
+
+  const setDecision = (slotId: string, decision: Decision) => {
+    setSyncSuccessMessage(null);
+    setDecisions((prev) => ({ ...prev, [slotId]: decision }));
+  };
+
+  const handleSetStatus = (slotId: string, status: Status) => {
+    const current = decisions[slotId]?.status;
     if (status === 'MIGRATED') {
       setMigratingSlotId(migratingSlotId === slotId ? null : slotId);
       return;
     }
     setMigratingSlotId(null);
-    setSlotStatusMap((prev) => ({
-      ...prev,
-      [slotId]: {
-        ...prev[slotId],
-        status,
-      },
-    }));
+    // Повторное нажатие на выбранный статус — отмена решения
+    setDecision(slotId, { status: current === status ? 'PENDING' : status });
   };
 
-  const handleApplyMigration = (slotId: string, destination: 'tomorrow' | 'saturday') => {
-    const destLabel = destination === 'saturday' ? 'субботу' : 'завтра';
-    setSlotStatusMap((prev) => ({
-      ...prev,
-      [slotId]: {
-        ...prev[slotId],
-        status: 'MIGRATED',
-        migrationTarget: destination,
-        deliverable: prev[slotId]?.deliverable
-          ? `${prev[slotId]?.deliverable} (Перенесено на ${destLabel})`
-          : `Перенесено на ${destLabel}`,
-      },
-    }));
+  const handleApplyMigration = (slotId: string, destination: MigrationTarget) => {
+    setDecision(slotId, { status: 'MIGRATED', migrationTarget: destination });
     setMigratingSlotId(null);
   };
 
-  // Canvas WebP compression (Section 6.1 spec)
+  const handleResetSlot = (slotId: string) => {
+    setMigratingSlotId(null);
+    setDecision(slotId, { status: original.get(slotId) ?? 'PENDING' });
+  };
+
+  // Фото: сжатие в WebP через Canvas → загрузка по pre-signed URL
   const handlePhotoSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    if (fileInputRef.current) fileInputRef.current.value = '';
     if (!file) return;
-
-    if (file.size > 15 * 1024 * 1024) {
-      setSyncErrorMessage('Файл превышает допустимый размер 15 МБ. Выберите меньший файл.');
+    if (!file.type.startsWith('image/')) {
+      setMediaError('Выберите изображение (фото страницы или эскиза).');
+      return;
+    }
+    if (file.size > MAX_PHOTO_BYTES) {
+      setMediaError('Файл больше 15 МБ. Выберите фото поменьше.');
       return;
     }
 
-    setSyncErrorMessage(null);
+    setMediaError(null);
     setIsCompressingImage(true);
     try {
-      const originalSize = file.size;
-      const compressedBlob = await processImageForUpload(file);
-      const compressedSize = compressedBlob.size;
-      const ratio = Math.round((1 - compressedSize / originalSize) * 100);
-
+      const compressed = await processImageForUpload(file);
       setCompressionStats({
-        originalSize,
-        compressedSize,
-        ratio,
+        originalSize: file.size,
+        compressedSize: compressed.size,
+        ratio: Math.max(0, Math.round((1 - compressed.size / file.size) * 100)),
       });
-
+      setIsCompressingImage(false);
       setIsUploadingMedia(true);
       await uploadMediaWithPresignedUrl({
         weekId,
-        fileBlob: compressedBlob,
+        fileBlob: compressed,
         fileName: `sketch-${Date.now()}.webp`,
-        note: mediaNoteInput || 'Фото страницы конспекта / эскиза',
+        note: mediaNoteInput.trim() || 'Фото страницы конспекта / эскиза',
       });
-
-      onSlotUpdated();
       setMediaNoteInput('');
+      onSlotUpdated();
     } catch (err) {
-      console.error('Photo upload error:', err);
-      setSyncErrorMessage('Не удалось загрузить фотоконспект. Попробуйте снова.');
+      setMediaError((err as Error)?.message || 'Не удалось загрузить фотоконспект. Попробуйте снова.');
     } finally {
       setIsCompressingImage(false);
       setIsUploadingMedia(false);
-      if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
 
-  // Opus Audio recording (Section 6.2 spec)
+  // Голос: Opus через MediaRecorder, лимит 120 секунд
   const handleStartAudio = async () => {
+    setMediaError(null);
+    setRecordedAudio(null);
+    setSecondsRemaining(120);
     try {
-      setRecordedAudioPreview(null);
+      await audioPipeline.start(
+        (remaining) => setSecondsRemaining(remaining),
+        (result) => {
+          // Автостоп по лимиту времени
+          setIsRecordingAudio(false);
+          setRecordedAudio({ blob: result.blob, url: result.url, duration: result.durationSeconds });
+        }
+      );
       setIsRecordingAudio(true);
-      setSecondsRemaining(120);
-
-      await audioPipeline.start((remaining) => {
-        setSecondsRemaining(remaining);
-      });
     } catch (err) {
-      console.error('Audio capture error:', err);
       setIsRecordingAudio(false);
+      const name = (err as Error)?.name;
+      setMediaError(
+        name === 'NotAllowedError'
+          ? 'Нет доступа к микрофону. Разрешите его в настройках браузера.'
+          : name === 'NotFoundError'
+            ? 'Микрофон не найден на этом устройстве.'
+            : 'Запись голоса недоступна в этом браузере.'
+      );
     }
   };
 
   const handleStopAudio = async () => {
     try {
       const result = await audioPipeline.stop();
-      setIsRecordingAudio(false);
-      setRecordedAudioPreview({
-        blob: result.blob,
-        url: result.url,
-        duration: result.durationSeconds,
-      });
-    } catch (err) {
-      console.error('Audio stop error:', err);
+      setRecordedAudio({ blob: result.blob, url: result.url, duration: result.durationSeconds });
+    } catch {
+      setMediaError('Запись прервалась. Попробуйте ещё раз.');
+    } finally {
       setIsRecordingAudio(false);
     }
   };
 
+  const handleToggleAudio = () => {
+    const el = audioPlayerRef.current;
+    if (!el) return;
+    if (isPlayingAudio) {
+      el.pause();
+      setIsPlayingAudio(false);
+    } else {
+      el.play().then(() => setIsPlayingAudio(true)).catch(() => setIsPlayingAudio(false));
+    }
+  };
+
   const handleUploadAudio = async () => {
-    if (!recordedAudioPreview) return;
+    if (!recordedAudio || isUploadingMedia) return;
     setIsUploadingMedia(true);
+    setMediaError(null);
     try {
+      const ext = recordedAudio.blob.type.includes('ogg') ? 'ogg' : recordedAudio.blob.type.includes('mp4') ? 'm4a' : 'webm';
       await uploadMediaWithPresignedUrl({
         weekId,
-        fileBlob: recordedAudioPreview.blob,
-        fileName: `voicenote-${Date.now()}.webm`,
-        note: mediaNoteInput || `Голосовая мысль (${recordedAudioPreview.duration} сек)`,
+        fileBlob: recordedAudio.blob,
+        fileName: `voicenote-${Date.now()}.${ext}`,
+        note: mediaNoteInput.trim() || `Голосовая мысль (${recordedAudio.duration} сек)`,
       });
-      setRecordedAudioPreview(null);
+      setRecordedAudio(null);
       setMediaNoteInput('');
       onSlotUpdated();
     } catch (err) {
-      console.error('Voice note upload error:', err);
+      setMediaError((err as Error)?.message || 'Не удалось сохранить голосовую заметку.');
     } finally {
       setIsUploadingMedia(false);
     }
   };
 
-  // Single Transaction API sync
+  // Все решения дня — одной транзакцией; отправляются только изменённые слоты
   const handleBatchSync = async () => {
     if (isBatchSyncing) return;
     setIsBatchSyncing(true);
     setSyncSuccessMessage(null);
     setSyncErrorMessage(null);
-    try {
-      const updatedSlots = Object.entries(slotStatusMap).map(([id, val]) => ({
-        id,
-        status: val.status,
-        deliverable: val.deliverable,
-        taskGoal: val.taskGoal,
-      }));
 
-      const res = await fetch(`/api/v1/days/${dayId}/batch-debrief`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          updatedSlots,
-          newCustomEvents: [],
-        }),
-      });
+    const updatedSlots = changed.map((s) => ({
+      id: s.id,
+      status: decisions[s.id].status,
+      migrationTarget: decisions[s.id].migrationTarget,
+    }));
 
-      if (res.ok) {
-        setSyncSuccessMessage('Вечерний дебрифинг успешно сохранен в единой транзакции (Single Transaction API)');
-        onDebriefCompleted();
-        setTimeout(() => setSyncSuccessMessage(null), 4000);
-      } else {
-        const data = await res.json().catch(() => ({}));
-        setSyncErrorMessage(data.error || 'Не удалось сохранить статус дня. Попробуйте еще раз.');
-      }
-    } catch (err) {
-      console.error('Batch sync error:', err);
-      setSyncErrorMessage('Сетевой сбой при отправке дебрифинга. Ваши отметки сохранены в интерфейсе — нажмите повторить.');
-    } finally {
-      setIsBatchSyncing(false);
+    const res = await apiFetch<{ data: { updatedSlotsCount: number; migratedCopiesCount: number } }>(
+      `/api/v1/days/${dayId}/batch-debrief`,
+      { method: 'POST', body: { updatedSlots, newCustomEvents: [] } }
+    );
+    setIsBatchSyncing(false);
+
+    if (res.ok) {
+      const moved = res.data?.data.migratedCopiesCount ?? 0;
+      setSyncSuccessMessage(
+        updatedSlots.length === 0
+          ? 'День закрыт — изменений не было.'
+          : `День закрыт: ${updatedSlots.length} ${plural(updatedSlots.length, ['решение сохранено', 'решения сохранено', 'решений сохранено'])}${
+              moved ? `, ${moved} ${plural(moved, ['задача перенесена', 'задачи перенесены', 'задач перенесено'])} в план` : ''
+            }.`
+      );
+      onDebriefCompleted();
+    } else {
+      setSyncErrorMessage(`${res.error} Ваши отметки остались на экране — можно повторить.`);
     }
   };
 
-  const statusLabel = (st: string) => (st === 'DONE' ? 'Готово' : st === 'MIGRATED' ? 'Перенесено' : st === 'DROPPED' ? 'Отменено' : 'Ждёт решения');
-  const pct = (n: number) => (totalSlots > 0 ? (n / totalSlots) * 100 : 0);
+  const busyMedia = isCompressingImage || isUploadingMedia;
 
   return (
     <div>
@@ -290,20 +312,19 @@ export const EveningDebriefView: React.FC<EveningDebriefViewProps> = ({
         }
         mascot="adm"
         stats={[
-          { value: `${doneCount}/${totalSlots}`, label: 'выполнено сегодня' },
-          { value: migratedCount, unit: 'шт.', label: 'перенесено' },
-          { value: droppedCount, unit: 'шт.', label: 'отменено' },
+          { value: `${counts.DONE}/${totalSlots}`, label: 'выполнено сегодня' },
+          { value: counts.MIGRATED, unit: 'шт.', label: 'перенесено' },
+          { value: counts.DROPPED, unit: 'шт.', label: 'отменено' },
         ]}
       />
 
       {syncSuccessMessage && (
-        <div style={{ marginBottom: 'var(--s5)' }}>
+        <div className="mz-gap-b">
           <Notice icon={<Check size={18} />}>{syncSuccessMessage}</Notice>
         </div>
       )}
-
       {syncErrorMessage && (
-        <div style={{ marginBottom: 'var(--s5)' }}>
+        <div className="mz-gap-b">
           <InlineAlert tone="error" onRetry={handleBatchSync} onDismiss={() => setSyncErrorMessage(null)}>
             {syncErrorMessage}
           </InlineAlert>
@@ -316,41 +337,54 @@ export const EveningDebriefView: React.FC<EveningDebriefViewProps> = ({
             {dayTitle}
             <small>{dateStr}</small>
           </h2>
-          <p>Выбери статус в каждой строке — решение сохранится одним пакетом.</p>
+          <p>Выбери статус в каждой строке — решения сохранятся одним пакетом.</p>
         </div>
-        <div style={{ minWidth: 220, flex: '0 1 280px' }} aria-label="Распределение статусов дня">
+        <div className="mz-h2__aside" aria-label="Распределение статусов дня">
           <div className="mz-segbar">
-            <i className="done" style={{ width: `${pct(doneCount)}%` }} />
-            <i className="migrated" style={{ width: `${pct(migratedCount)}%` }} />
-            <i className="dropped" style={{ width: `${pct(droppedCount)}%` }} />
+            <i className="done" style={{ width: `${pct(counts.DONE)}%` }} />
+            <i className="migrated" style={{ width: `${pct(counts.MIGRATED)}%` }} />
+            <i className="dropped" style={{ width: `${pct(counts.DROPPED)}%` }} />
           </div>
           <div className="mz-cell-sub">
-            {doneCount} готово · {migratedCount} перенос · {droppedCount} отмена
+            {counts.DONE} готово · {counts.MIGRATED} перенос · {counts.DROPPED} отмена
           </div>
         </div>
       </div>
 
-      {/* Статус = цвет кромки + подпись; решение принимается прямо в строке */}
+      {slots.length === 0 && (
+        <EmptyState
+          icon={<CalendarX2 size={36} />}
+          title="На этот день нет задач"
+          description="Уроки и события, активированные утром, появятся здесь для вечерней сверки."
+          actionText={onNavigateToMorning ? 'Открыть утренний фокус' : undefined}
+          onAction={onNavigateToMorning}
+        />
+      )}
+
       <div className="mz-slots">
         {slots.map((slot) => {
-          const state = slotStatusMap[slot.id] || { status: slot.status };
-          const isDone = state.status === 'DONE';
-          const isMigrated = state.status === 'MIGRATED';
-          const isDropped = state.status === 'DROPPED';
+          const decision = decisions[slot.id] ?? { status: slot.status as Status };
+          const st = decision.status;
           const isMigratingThis = migratingSlotId === slot.id;
-          const cls = ['mz-slot', isDone ? 'mz-slot--done' : isMigrated ? 'mz-slot--migrated' : isDropped ? 'mz-slot--dropped' : ''].join(' ');
+          const isChanged = st !== original.get(slot.id);
+          const cls = [
+            'mz-slot',
+            st === 'DONE' ? 'mz-slot--done' : st === 'MIGRATED' ? 'mz-slot--migrated' : st === 'DROPPED' ? 'mz-slot--dropped' : '',
+            slot.isGhost && st === 'PENDING' ? 'mz-slot--ghost' : '',
+          ].join(' ');
 
           return (
             <div key={slot.id} className={cls}>
-              <div className="mz-slot__time">
-                <b>{slot.startTime || '00:00'}</b>
-                <span>{slot.endTime || '00:00'}</span>
+              <div className="mz-slot__time" aria-hidden="true">
+                <b>{slot.startTime || '—'}</b>
+                <span>{slot.endTime || ''}</span>
               </div>
 
-              <div style={{ minWidth: 0 }}>
+              <div className="mz-slot__main">
                 <h3 className="mz-slot__title">
                   {slot.title}
                   {slot.type === 'CUSTOM_EVENT' && <span className="mz-chip mz-chip--lav">Событие</span>}
+                  {slot.isGhost && <span className="mz-chip mz-chip--outline">Без интенции</span>}
                 </h3>
                 {slot.taskGoal && <p className="mz-slot__goal">{slot.taskGoal}</p>}
                 {slot.deliverable && (
@@ -361,10 +395,13 @@ export const EveningDebriefView: React.FC<EveningDebriefViewProps> = ({
                 )}
               </div>
 
-              <span
-                className={`mz-chip ${isDone ? 'mz-chip--teal' : isMigrated ? 'mz-chip--lav' : isDropped ? 'mz-chip--error' : 'mz-chip--outline'}`}
-              >
-                {statusLabel(state.status)}
+              <span className={`mz-chip ${STATUS_CHIP[st]}`}>
+                {STATUS_LABEL[st]}
+                {st === 'MIGRATED' && isChanged && decision.migrationTarget
+                  ? decision.migrationTarget === 'saturday'
+                    ? ' · на субботу'
+                    : ' · на завтра'
+                  : ''}
               </span>
 
               <div className="mz-slot__actions">
@@ -372,7 +409,7 @@ export const EveningDebriefView: React.FC<EveningDebriefViewProps> = ({
                   <button
                     type="button"
                     className="mz-seg__btn mz-seg__btn--done"
-                    aria-pressed={isDone}
+                    aria-pressed={st === 'DONE'}
                     onClick={() => handleSetStatus(slot.id, 'DONE')}
                   >
                     <CheckCircle2 size={16} /> Готово
@@ -380,7 +417,8 @@ export const EveningDebriefView: React.FC<EveningDebriefViewProps> = ({
                   <button
                     type="button"
                     className="mz-seg__btn mz-seg__btn--migrated"
-                    aria-pressed={isMigrated || isMigratingThis}
+                    aria-pressed={st === 'MIGRATED' || isMigratingThis}
+                    aria-expanded={isMigratingThis}
                     onClick={() => handleSetStatus(slot.id, 'MIGRATED')}
                   >
                     <ArrowRightLeft size={16} /> Перенести
@@ -388,16 +426,21 @@ export const EveningDebriefView: React.FC<EveningDebriefViewProps> = ({
                   <button
                     type="button"
                     className="mz-seg__btn mz-seg__btn--dropped"
-                    aria-pressed={isDropped}
-                    onClick={() => handleSetStatus(slot.id, isDropped ? 'PENDING' : 'DROPPED')}
+                    aria-pressed={st === 'DROPPED'}
+                    onClick={() => handleSetStatus(slot.id, 'DROPPED')}
                   >
                     <XCircle size={16} /> Отмена
                   </button>
                 </div>
+                {isChanged && (
+                  <button type="button" className="mz-link mz-link--sm" onClick={() => handleResetSlot(slot.id)}>
+                    <RotateCcw size={12} /> вернуть
+                  </button>
+                )}
               </div>
 
               {isMigratingThis && (
-                <div className="mz-inline" style={{ gridColumn: '1 / -1' }}>
+                <div className="mz-inline mz-slot__full">
                   <strong>Куда перенести?</strong>
                   <div className="mz-row">
                     <button type="button" className="mz-btn mz-btn--sm mz-btn--light" onClick={() => handleApplyMigration(slot.id, 'tomorrow')}>
@@ -418,16 +461,16 @@ export const EveningDebriefView: React.FC<EveningDebriefViewProps> = ({
       </div>
 
       {/* Медиа-буфер: фото и голос */}
-      <section className="mz-panel mz-panel--lav" style={{ marginTop: 'var(--s6)' }}>
+      <section className="mz-panel mz-panel--lav mz-gap-t">
         <div className="mz-panel__title">
           <span className="mz-chip mz-chip--lav">Медиа</span>
           Буфер «Наброски и эскизы»
-          <span style={{ marginLeft: 'auto', fontWeight: 500, letterSpacing: 0, textTransform: 'none', fontSize: 12, color: 'var(--text-soft)' }}>
-            Canvas WebP · Opus 32k
-          </span>
+          <span className="mz-panel__meta">WebP · Opus 32 kbps</span>
         </div>
 
         <div className="mz-stack">
+          {mediaError && <InlineAlert onDismiss={() => setMediaError(null)}>{mediaError}</InlineAlert>}
+
           <label className="mz-field">
             <span className="mz-label">
               Контекст артефакта <em>необязательно</em>
@@ -435,6 +478,7 @@ export const EveningDebriefView: React.FC<EveningDebriefViewProps> = ({
             <input
               type="text"
               value={mediaNoteInput}
+              maxLength={500}
               onChange={(e) => setMediaNoteInput(e.target.value)}
               placeholder="Схема цепи на уроке физики, страница 42"
               className="mz-input"
@@ -448,24 +492,21 @@ export const EveningDebriefView: React.FC<EveningDebriefViewProps> = ({
               accept="image/*"
               capture="environment"
               onChange={handlePhotoSelect}
-              style={{ display: 'none' }}
+              className="mz-visually-hidden"
+              tabIndex={-1}
+              aria-hidden="true"
             />
-            <button
-              type="button"
-              className="mz-btn mz-btn--lav"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={isCompressingImage || isUploadingMedia}
-            >
-              <Camera size={16} /> {isCompressingImage ? 'Сжимаю…' : 'Фото конспекта'}
+            <button type="button" className="mz-btn mz-btn--lav" onClick={() => fileInputRef.current?.click()} disabled={busyMedia || isRecordingAudio}>
+              <Camera size={16} /> {isCompressingImage ? 'Сжимаю…' : isUploadingMedia ? 'Загружаю…' : 'Фото конспекта'}
             </button>
 
             {!isRecordingAudio ? (
-              <button type="button" className="mz-btn mz-btn--light" onClick={handleStartAudio} disabled={isUploadingMedia}>
+              <button type="button" className="mz-btn mz-btn--light" onClick={handleStartAudio} disabled={busyMedia}>
                 <Mic size={16} /> Голосовая мысль
               </button>
             ) : (
-              <button type="button" className="mz-btn mz-btn--primary" onClick={handleStopAudio}>
-                <Square size={14} fill="currentColor" /> Стоп · <span className="tabular-nums">{secondsRemaining} с</span>
+              <button type="button" className="mz-btn mz-btn--primary mz-recording" onClick={handleStopAudio}>
+                <Square size={14} fill="currentColor" /> Стоп · <span className="mz-num">{secondsRemaining} с</span>
               </button>
             )}
           </div>
@@ -473,47 +514,32 @@ export const EveningDebriefView: React.FC<EveningDebriefViewProps> = ({
           {compressionStats && (
             <Notice tone="lav">
               Сжато: <strong>{(compressionStats.originalSize / 1024 / 1024).toFixed(1)} MB</strong> →{' '}
-              <strong>{(compressionStats.compressedSize / 1024).toFixed(0)} KB</strong> WebP (−{compressionStats.ratio}%)
+              <strong>{kb(compressionStats.compressedSize)}</strong> WebP (−{compressionStats.ratio}%)
             </Notice>
           )}
 
-          {recordedAudioPreview && (
+          {recordedAudio && (
             <div className="mz-player">
-              <audio ref={audioPlayerRef} src={recordedAudioPreview.url} onEnded={() => setIsPlayingAudio(false)} style={{ display: 'none' }} />
-              <div className="mz-row" style={{ flexWrap: 'nowrap' }}>
+              <audio ref={audioPlayerRef} src={recordedAudio.url} onEnded={() => setIsPlayingAudio(false)} hidden />
+              <div className="mz-row mz-row--nowrap">
                 <button
                   type="button"
                   className="mz-btn mz-btn--sm mz-btn--peach"
-                  aria-label={isPlayingAudio ? 'Пауза' : 'Воспроизвести'}
-                  onClick={() => {
-                    if (audioPlayerRef.current) {
-                      if (isPlayingAudio) {
-                        audioPlayerRef.current.pause();
-                        setIsPlayingAudio(false);
-                      } else {
-                        audioPlayerRef.current.play();
-                        setIsPlayingAudio(true);
-                      }
-                    }
-                  }}
+                  aria-label={isPlayingAudio ? 'Пауза' : 'Прослушать запись'}
+                  onClick={handleToggleAudio}
                 >
                   {isPlayingAudio ? <Pause size={16} /> : <Play size={16} />}
                 </button>
                 <div>
-                  <b>Аудиозапись · {recordedAudioPreview.duration} сек</b>
-                  <small>Opus 32 kbps mono</small>
+                  <b>Аудиозапись · {recordedAudio.duration} сек</b>
+                  <small>{kb(recordedAudio.blob.size)} · Opus mono</small>
                 </div>
               </div>
-              <div className="mz-row" style={{ flexWrap: 'nowrap' }}>
+              <div className="mz-row mz-row--nowrap">
                 <button type="button" className="mz-btn mz-btn--sm mz-btn--teal" onClick={handleUploadAudio} disabled={isUploadingMedia}>
                   <Upload size={16} /> {isUploadingMedia ? 'Загрузка…' : 'Сохранить'}
                 </button>
-                <button
-                  type="button"
-                  className="mz-link"
-                  style={{ color: '#fff' }}
-                  onClick={() => setRecordedAudioPreview(null)}
-                >
+                <button type="button" className="mz-link mz-link--inverse" onClick={() => setRecordedAudio(null)} disabled={isUploadingMedia}>
                   Удалить
                 </button>
               </div>
@@ -522,13 +548,11 @@ export const EveningDebriefView: React.FC<EveningDebriefViewProps> = ({
 
           {mediaAssets.length > 0 && (
             <div>
-              <div className="mz-label">Артефакты недели · {mediaAssets.length} (нажмите для просмотра)</div>
+              <div className="mz-label">Артефакты недели · {mediaAssets.length}</div>
               <div className="mz-media">
                 {mediaAssets.map((asset) => {
-                  const isImage = asset.fileType.includes('image');
+                  const isImage = asset.fileType.startsWith('image');
                   const hasFailed = failedImageIds.has(asset.id);
-                  const safeThumbUrl = getSafeMediaUrl(asset.fileUrl);
-
                   return (
                     <button
                       key={asset.id}
@@ -538,30 +562,18 @@ export const EveningDebriefView: React.FC<EveningDebriefViewProps> = ({
                       aria-label={`Открыть артефакт: ${asset.note || asset.fileName}`}
                     >
                       <div className="mz-media__thumb">
-                        {isImage ? (
-                          hasFailed ? (
-                            <div className="mz-media__thumb-fallback">
-                              <Camera size={22} color="var(--teal)" />
-                              <span>Фотоконспект</span>
-                            </div>
-                          ) : (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img
-                              src={safeThumbUrl}
-                              alt={asset.note || asset.fileName}
-                              onError={() =>
-                                setFailedImageIds((prev) => {
-                                  const next = new Set(prev);
-                                  next.add(asset.id);
-                                  return next;
-                                })
-                              }
-                            />
-                          )
+                        {isImage && !hasFailed ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={mediaUrl(asset.fileUrl)}
+                            alt=""
+                            loading="lazy"
+                            onError={() => setFailedImageIds((prev) => new Set(prev).add(asset.id))}
+                          />
                         ) : (
-                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 4 }}>
-                            <Mic size={26} color="var(--lav-d)" />
-                            <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--lav-d)', textTransform: 'uppercase' }}>Аудио</span>
+                          <div className="mz-media__thumb-fallback">
+                            {isImage ? <Camera size={22} /> : <Mic size={24} />}
+                            <span>{isImage ? 'Фото' : 'Аудио'}</span>
                           </div>
                         )}
                         <div className="mz-media__item-overlay" aria-hidden="true">
@@ -570,7 +582,7 @@ export const EveningDebriefView: React.FC<EveningDebriefViewProps> = ({
                       </div>
                       <div className="mz-media__meta">
                         <b>{asset.note || asset.fileName}</b>
-                        <span>{(asset.fileSize / 1024).toFixed(0)} KB · Нажмите для просмотра</span>
+                        <span>{kb(asset.fileSize)}</span>
                       </div>
                     </button>
                   );
@@ -581,7 +593,6 @@ export const EveningDebriefView: React.FC<EveningDebriefViewProps> = ({
         </div>
       </section>
 
-      {/* Lightbox / Fullscreen Modal */}
       {selectedMediaAsset && (
         <MediaPreviewModal
           asset={selectedMediaAsset}
@@ -594,20 +605,20 @@ export const EveningDebriefView: React.FC<EveningDebriefViewProps> = ({
       )}
 
       {/* Главное действие экрана */}
-      <div style={{ marginTop: 'var(--s6)', display: 'flex', flexDirection: 'column', gap: 10 }}>
-        <button type="button" className="mz-btn mz-btn--primary mz-btn--lg mz-btn--block" onClick={handleBatchSync} disabled={isBatchSyncing}>
-          {isBatchSyncing ? 'Сохраняю день…' : 'Завершить день'}
+      <div className="mz-actions-col mz-gap-t">
+        <button
+          type="button"
+          className="mz-btn mz-btn--primary mz-btn--lg mz-btn--block"
+          onClick={handleBatchSync}
+          disabled={isBatchSyncing || slots.length === 0}
+        >
+          {isBatchSyncing ? 'Сохраняю день…' : changed.length ? `Завершить день · ${changed.length} изм.` : 'Завершить день'}
           {!isBatchSyncing && <Check size={18} />}
         </button>
 
         {onNavigateToMorning && (
-          <button
-            type="button"
-            className="mz-btn mz-btn--outline mz-btn--block"
-            onClick={onNavigateToMorning}
-            style={{ fontSize: 13, color: '#555555' }}
-          >
-            ← Перейти к утреннему фокусу (до 13:00)
+          <button type="button" className="mz-btn mz-btn--outline mz-btn--block mz-btn--quiet" onClick={onNavigateToMorning}>
+            ← Вернуться к утреннему фокусу
           </button>
         )}
       </div>

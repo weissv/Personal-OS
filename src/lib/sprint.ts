@@ -65,7 +65,32 @@ export async function getSchoolSprintTemplate() {
   });
   const picked = pickActiveSprint(sprints);
   if (!picked) return null;
-  return { title: picked.title, startDate: picked.startDate, weeksTotal: picked.weeksTotal };
+  return { title: picked.title, startDate: picked.startDate, endDate: picked.endDate, weeksTotal: picked.weeksTotal };
+}
+
+/** Учебный год и четверть по дате (Узбекистан: сентябрь–май). */
+export function academicPeriod(today: Date = todayUTC()) {
+  const m = today.getUTCMonth(); // 0 = январь
+  const y = today.getUTCFullYear();
+  const startYear = m >= 7 ? y : y - 1; // с августа — новый учебный год
+  const quarter = m >= 7 && m <= 9 ? 1 : m >= 10 ? 2 : m <= 2 ? 3 : 4;
+  return { yearLabel: `${startYear}-${startYear + 1}`, quarter };
+}
+
+/**
+ * Параметры спринта для нового ученика: присоединяемся к текущему спринту школы,
+ * чтобы недели совпадали с одноклассниками; иначе — новый спринт с текущего понедельника.
+ */
+export async function defaultSprintForNewStudent(gradeLevel: number | null) {
+  const today = todayUTC();
+  const gradeSuffix = gradeLevel ? ` (${gradeLevel} класс)` : '';
+  const template = await getSchoolSprintTemplate();
+  if (template && template.endDate >= today) {
+    const base = template.title.replace(/\s*\(\d+ класс\)\s*$/, '');
+    return { title: `${base}${gradeSuffix}`, startDate: template.startDate, weeksTotal: template.weeksTotal };
+  }
+  const { yearLabel, quarter } = academicPeriod(today);
+  return { title: `${quarter} четверть ${yearLabel}${gradeSuffix}`, startDate: mondayOnOrBefore(today), weeksTotal: 10 };
 }
 
 interface GenerateOptions {

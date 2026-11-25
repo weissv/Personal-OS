@@ -28,3 +28,13 @@ export async function audit(entry: AuditEntry) {
     console.error('Audit log failed:', e);
   }
 }
+
+/** Кто действует: при имперсонации в журнал пишется реальный администратор. */
+export function auditActor(ctx: {
+  user: { id: string; fullName: string };
+  realAdmin: { id: string; fullName: string } | null;
+}): Pick<AuditEntry, 'actorId' | 'actorName'> {
+  return ctx.realAdmin
+    ? { actorId: ctx.realAdmin.id, actorName: `${ctx.realAdmin.fullName} (как ${ctx.user.fullName})` }
+    : { actorId: ctx.user.id, actorName: ctx.user.fullName };
+}

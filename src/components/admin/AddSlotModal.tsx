@@ -1,7 +1,9 @@
 'use client';
 
 import React, { useState } from 'react';
-import { X } from 'lucide-react';
+import { CalendarPlus } from 'lucide-react';
+import { Dialog, InlineAlert } from '../ui';
+import { apiFetch } from '@/lib/api-client';
 
 const DAY_NAMES: Record<number, string> = {
   1: 'Понедельник',
@@ -9,6 +11,7 @@ const DAY_NAMES: Record<number, string> = {
   3: 'Среда',
   4: 'Четверг',
   5: 'Пятница',
+  6: 'Суббота',
 };
 
 interface AddSlotModalProps {
@@ -17,119 +20,86 @@ interface AddSlotModalProps {
   onSuccess: () => void;
 }
 
-export const AddSlotModal: React.FC<AddSlotModalProps> = ({
-  gradeLevel,
-  onClose,
-  onSuccess,
-}) => {
+export const AddSlotModal: React.FC<AddSlotModalProps> = ({ gradeLevel, onClose, onSuccess }) => {
   const [dayOfWeek, setDayOfWeek] = useState(1);
   const [startTime, setStartTime] = useState('08:30');
-  const [endTime, setEndTime] = useState('09:15');
+  const [endTime, setEndTime] = useState('09:10');
   const [title, setTitle] = useState('');
+  const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!title.trim()) return;
+    if (isSubmitting) return;
+    if (!title.trim()) return setError('Укажите название предмета');
+    if (endTime <= startTime) return setError('Урок должен заканчиваться позже, чем начинается');
 
     setIsSubmitting(true);
-    try {
-      const res = await fetch('/api/v1/admin/timetable', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          gradeLevel,
-          dayOfWeek,
-          startTime,
-          endTime,
-          title: title.trim(),
-        }),
-      });
-
-      if (res.ok) {
-        onSuccess();
-        onClose();
-      }
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setIsSubmitting(false);
+    setError(null);
+    const res = await apiFetch('/api/v1/admin/timetable', {
+      method: 'POST',
+      body: { gradeLevel, dayOfWeek, startTime, endTime, title: title.trim() },
+    });
+    setIsSubmitting(false);
+    if (res.ok) {
+      onSuccess();
+      onClose();
+    } else {
+      setError(res.error);
     }
   };
 
   return (
-    <div className="gm-modal-overlay">
-      <div className="gm-modal">
-        <div className="gm-modal-head">
-          <h3 className="gm-modal-title">Добавить урок в расписание ({gradeLevel} класс)</h3>
-          <button type="button" onClick={onClose} className="gm-modal-close">
-            <X size={18} />
-          </button>
+    <Dialog title={`Новый урок · ${gradeLevel} класс`} icon={<CalendarPlus size={18} />} onClose={onClose} busy={isSubmitting}>
+      <form onSubmit={handleSubmit} className="mz-stack" noValidate>
+        {error && <InlineAlert onDismiss={() => setError(null)}>{error}</InlineAlert>}
+        <label className="mz-field">
+          <span className="mz-label">День недели</span>
+          <select value={dayOfWeek} onChange={(e) => setDayOfWeek(parseInt(e.target.value, 10))} className="mz-input">
+            {Object.entries(DAY_NAMES).map(([d, name]) => (
+              <option key={d} value={d}>
+                {name}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <div className="mz-grid2">
+          <label className="mz-field">
+            <span className="mz-label">Начало</span>
+            <input type="time" required value={startTime} onChange={(e) => setStartTime(e.target.value)} className="mz-input mz-num" />
+          </label>
+          <label className="mz-field">
+            <span className="mz-label">Конец</span>
+            <input type="time" required value={endTime} onChange={(e) => setEndTime(e.target.value)} className="mz-input mz-num" />
+          </label>
         </div>
 
-        <form onSubmit={handleSubmit}>
-          <div className="gm-form-group">
-            <label className="gm-form-label">День недели</label>
-            <select
-              value={dayOfWeek}
-              onChange={(e) => setDayOfWeek(parseInt(e.target.value, 10))}
-              className="gm-select"
-            >
-              {[1, 2, 3, 4, 5].map((d) => (
-                <option key={d} value={d}>
-                  {DAY_NAMES[d]}
-                </option>
-              ))}
-            </select>
-          </div>
+        <label className="mz-field">
+          <span className="mz-label">Предмет</span>
+          <input
+            type="text"
+            required
+            maxLength={150}
+            placeholder="Алгебра, физика, английский…"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            className="mz-input"
+            autoFocus
+          />
+        </label>
 
-          <div className="gm-form-row">
-            <div className="gm-form-group">
-              <label className="gm-form-label">Начало (ЧЧ:ММ)</label>
-              <input
-                type="text"
-                required
-                placeholder="08:30"
-                value={startTime}
-                onChange={(e) => setStartTime(e.target.value)}
-                className="gm-input"
-              />
-            </div>
-            <div className="gm-form-group">
-              <label className="gm-form-label">Конец (ЧЧ:ММ)</label>
-              <input
-                type="text"
-                required
-                placeholder="09:15"
-                value={endTime}
-                onChange={(e) => setEndTime(e.target.value)}
-                className="gm-input"
-              />
-            </div>
-          </div>
+        <p className="mz-hint">Урок появится у учеников, спринты которых будут созданы после этого изменения.</p>
 
-          <div className="gm-form-group">
-            <label className="gm-form-label">Название предмета</label>
-            <input
-              type="text"
-              required
-              placeholder="Алгебра, Физика, Английский…"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              className="gm-input"
-            />
-          </div>
-
-          <div className="gm-modal-footer">
-            <button type="button" onClick={onClose} className="gm-btn-cancel">
-              Отмена
-            </button>
-            <button type="submit" disabled={isSubmitting} className="gm-btn-save">
-              {isSubmitting ? 'Добавление…' : 'Добавить в сетку'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+        <div className="mz-row mz-row--end">
+          <button type="button" onClick={onClose} className="mz-link">
+            Отмена
+          </button>
+          <button type="submit" disabled={isSubmitting || !title.trim()} className="mz-btn mz-btn--primary">
+            {isSubmitting ? 'Добавление…' : 'Добавить в сетку'}
+          </button>
+        </div>
+      </form>
+    </Dialog>
   );
 };

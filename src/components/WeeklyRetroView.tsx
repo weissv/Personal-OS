@@ -1,8 +1,11 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Shield, Eye, EyeOff, AlertTriangle, Award, Send, UserCheck, Check, Sparkles } from 'lucide-react';
 import { ViewHero, Notice, InlineAlert } from '@/components/ui';
+import { apiFetch } from '@/lib/api-client';
+import { formatSchoolDateTime } from '@/lib/school-time';
+import { ACCESS_LEVEL_LABEL, AccessLevel } from '@/lib/types';
 
 interface WeeklyRetroViewProps {
   weekId: string;
@@ -11,7 +14,7 @@ interface WeeklyRetroViewProps {
   initialBlockers?: string | null;
   initialNextPlan?: string | null;
   isSubmitted: boolean;
-  initialParentAccessLevel: 'REVOKED' | 'SUMMARY_ONLY' | 'FULL_ACCESS';
+  initialParentAccessLevel: AccessLevel;
   mentorReview?: {
     feedback: string;
     signedAt: string;
@@ -28,6 +31,23 @@ interface WeeklyRetroViewProps {
 
 const MIN_CHARS = 10;
 
+interface RetroDraft {
+  retroSuccess?: string;
+  retroBlockers?: string;
+  retroNextPlan?: string;
+}
+
+function readDraft(key: string): RetroDraft | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(key);
+    const parsed = raw ? (JSON.parse(raw) as RetroDraft) : null;
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 interface QuestionProps {
   n: string;
   tone?: 'teal' | 'lav' | 'magenta';
@@ -40,11 +60,12 @@ interface QuestionProps {
 
 /** Карточка вопроса: крупный номер (как индекс на лендинге), счётчик символов — полоской (Tufte). */
 const Question: React.FC<QuestionProps> = ({ n, tone, title, hint, value, onChange, placeholder }) => {
-  const len = value.length;
+  const len = value.trim().length;
   const short = len < MIN_CHARS;
+  const hintId = `retro-q${n}-hint`;
   const cls = tone === 'magenta' ? 'mz-q mz-q--magenta' : tone === 'lav' ? 'mz-q mz-q--lav' : 'mz-q';
   return (
-    <label className={cls} style={{ display: 'block' }}>
+    <label className={`${cls} mz-q--block`}>
       <span className="mz-q__n" aria-hidden="true">
         {n}
       </span>
@@ -56,10 +77,12 @@ const Question: React.FC<QuestionProps> = ({ n, tone, title, hint, value, onChan
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
         className="mz-textarea"
-        aria-describedby={`${n}-hint`}
+        maxLength={5000}
+        aria-describedby={hintId}
+        aria-invalid={short && len > 0}
       />
-      <div className="mz-q__meter" id={`${n}-hint`}>
-        <span style={{ color: short && len > 0 ? '#b87a1c' : undefined, fontWeight: short && len > 0 ? 700 : 400 }}>
+      <div className="mz-q__meter" id={hintId}>
+        <span className={short && len > 0 ? 'mz-q__count mz-q__count--warn' : 'mz-q__count'}>
           {len} симв. {short ? `· минимум ${MIN_CHARS}` : '· хорошо'}
         </span>
         <div className={`mz-bar ${short ? 'mz-bar--warn' : ''}`}>
@@ -83,48 +106,48 @@ export const WeeklyRetroView: React.FC<WeeklyRetroViewProps> = ({
   parentReview,
   onRetroSubmitted,
 }) => {
-  const [retroSuccess, setRetroSuccess] = useState(initialSuccess || '');
-  const [retroBlockers, setRetroBlockers] = useState(initialBlockers || '');
-  const [retroNextPlan, setRetroNextPlan] = useState(initialNextPlan || '');
-  const [parentAccessLevel, setParentAccessLevel] = useState<'REVOKED' | 'SUMMARY_ONLY' | 'FULL_ACCESS'>(
-    initialParentAccessLevel
+  const DRAFT_KEY = `mezon_retro_draft_${weekId}`;
+
+  // Черновик читается один раз при открытии недели (Poka-Yoke: ни одного потерянного ответа)
+  const [draft] = useState(() => readDraft(DRAFT_KEY));
+  const pick = (initial: string | null | undefined, fromDraft?: string) => (initial ? initial : fromDraft || '');
+
+  const [retroSuccess, setRetroSuccess] = useState(() => pick(initialSuccess, draft?.retroSuccess));
+  const [retroBlockers, setRetroBlockers] = useState(() => pick(initialBlockers, draft?.retroBlockers));
+  const [retroNextPlan, setRetroNextPlan] = useState(() => pick(initialNextPlan, draft?.retroNextPlan));
+  const [parentAccessLevel, setParentAccessLevel] = useState<AccessLevel>(initialParentAccessLevel);
+  const [draftRestored, setDraftRestored] = useState(
+    () =>
+      !!draft &&
+      ((!initialSuccess && !!draft.retroSuccess) ||
+        (!initialBlockers && !!draft.retroBlockers) ||
+        (!initialNextPlan && !!draft.retroNextPlan))
   );
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
   const [saveErrorMessage, setSaveErrorMessage] = useState<string | null>(null);
-  const [draftRestored, setDraftRestored] = useState(false);
 
-  const DRAFT_KEY = `mezon_retro_draft_${weekId}`;
+  // Последняя сохранённая на сервере версия — черновик пишется, только если есть отличия
+  const savedRef = useRef({
+    retroSuccess: initialSuccess || '',
+    retroBlockers: initialBlockers || '',
+    retroNextPlan: initialNextPlan || '',
+  });
 
-  // Restore draft from localStorage on mount (Poka-Yoke: zero lost input)
   useEffect(() => {
-    if (typeof window === 'undefined') return;
+    const saved = savedRef.current;
+    const dirty =
+      retroSuccess !== saved.retroSuccess || retroBlockers !== saved.retroBlockers || retroNextPlan !== saved.retroNextPlan;
     try {
-      const saved = localStorage.getItem(DRAFT_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (parsed && (parsed.retroSuccess || parsed.retroBlockers || parsed.retroNextPlan)) {
-          if (!initialSuccess && parsed.retroSuccess) setRetroSuccess(parsed.retroSuccess);
-          if (!initialBlockers && parsed.retroBlockers) setRetroBlockers(parsed.retroBlockers);
-          if (!initialNextPlan && parsed.retroNextPlan) setRetroNextPlan(parsed.retroNextPlan);
-          setDraftRestored(true);
-        }
+      if (dirty) {
+        localStorage.setItem(DRAFT_KEY, JSON.stringify({ retroSuccess, retroBlockers, retroNextPlan, timestamp: Date.now() }));
+      } else {
+        localStorage.removeItem(DRAFT_KEY);
       }
-    } catch {}
-  }, [DRAFT_KEY, initialSuccess, initialBlockers, initialNextPlan]);
-
-  // Auto-save draft on change
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    try {
-      if (retroSuccess || retroBlockers || retroNextPlan) {
-        localStorage.setItem(
-          DRAFT_KEY,
-          JSON.stringify({ retroSuccess, retroBlockers, retroNextPlan, timestamp: Date.now() })
-        );
-      }
-    } catch {}
+    } catch {
+      // приватный режим — черновик просто не сохраняется
+    }
   }, [DRAFT_KEY, retroSuccess, retroBlockers, retroNextPlan]);
 
   // Anti-sabotage validation checks (< 10 chars)
@@ -134,60 +157,49 @@ export const WeeklyRetroView: React.FC<WeeklyRetroViewProps> = ({
   const hasSilentRetroWarning = isSuccessShort || isBlockersShort || isNextPlanShort;
 
   const filledCount = [retroSuccess, retroBlockers, retroNextPlan].filter((t) => t.trim().length >= MIN_CHARS).length;
+  const hasEmpty = [retroSuccess, retroBlockers, retroNextPlan].some((t) => !t.trim());
 
   const handleSubmit = async (e?: React.FormEvent) => {
     if (e) {
       e.preventDefault();
     }
     if (isSubmitting) return;
+    if (hasEmpty) {
+      setSaveErrorMessage('Ответь на все три вопроса — даже коротко.');
+      return;
+    }
     setIsSubmitting(true);
     setSaveSuccessMsg(null);
     setSaveErrorMessage(null);
-    try {
-      const res = await fetch(`/api/v1/weeks/${weekId}/retro`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          retroSuccess: retroSuccess.trim(),
-          retroBlockers: retroBlockers.trim(),
-          retroNextPlan: retroNextPlan.trim(),
-          parentAccessLevel,
-        }),
-      });
-
-      if (res.ok) {
-        setSaveSuccessMsg('Воскресная рефлексия зафиксирована.');
-        try {
-          localStorage.removeItem(DRAFT_KEY);
-        } catch {}
-        onRetroSubmitted();
-        setTimeout(() => setSaveSuccessMsg(null), 4000);
-      } else {
-        const data = await res.json().catch(() => ({}));
-        setSaveErrorMessage(data.error || 'Не удалось сохранить ретроспективу. Проверьте данные и повторите.');
+    const payload = {
+      retroSuccess: retroSuccess.trim(),
+      retroBlockers: retroBlockers.trim(),
+      retroNextPlan: retroNextPlan.trim(),
+    };
+    const res = await apiFetch(`/api/v1/weeks/${weekId}/retro`, {
+      method: 'PATCH',
+      body: { ...payload, parentAccessLevel },
+    });
+    setIsSubmitting(false);
+    if (res.ok) {
+      savedRef.current = { retroSuccess, retroBlockers, retroNextPlan };
+      try {
+        localStorage.removeItem(DRAFT_KEY);
+      } catch {
+        // ignore
       }
-    } catch (err) {
-      console.error(err);
-      setSaveErrorMessage('Сетевая ошибка при отправке ретроспективы. Черновик сохранён локально.');
-    } finally {
-      setIsSubmitting(false);
+      setDraftRestored(false);
+      setSaveSuccessMsg(isSubmitted ? 'Ретроспектива обновлена.' : 'Неделя закрыта — воскресная рефлексия зафиксирована.');
+      onRetroSubmitted();
+    } else {
+      setSaveErrorMessage(`${res.error} Черновик сохранён на этом устройстве.`);
     }
   };
 
-  const accessOptions: {
-    key: 'REVOKED' | 'SUMMARY_ONLY' | 'FULL_ACCESS';
-    color: string;
-    icon: React.ReactNode;
-    text: string;
-  }[] = [
-    { key: 'REVOKED', color: 'var(--error)', icon: <EyeOff size={16} />, text: 'Доступ закрыт. Родитель ничего не видит.' },
-    {
-      key: 'SUMMARY_ONLY',
-      color: 'var(--lav-d)',
-      icon: <Shield size={16} />,
-      text: 'Видны цели, субботний проект и итоги — без лога уроков.',
-    },
-    { key: 'FULL_ACCESS', color: 'var(--teal)', icon: <Eye size={16} />, text: 'Полный доступ ко всем слотам и артефактам недели.' },
+  const accessOptions: { key: AccessLevel; color: string; icon: React.ReactNode }[] = [
+    { key: 'REVOKED', color: 'var(--error)', icon: <EyeOff size={16} /> },
+    { key: 'SUMMARY_ONLY', color: 'var(--lav-d)', icon: <Shield size={16} /> },
+    { key: 'FULL_ACCESS', color: 'var(--teal)', icon: <Eye size={16} /> },
   ];
 
   return (
@@ -213,21 +225,21 @@ export const WeeklyRetroView: React.FC<WeeklyRetroViewProps> = ({
       />
 
       {saveSuccessMsg && (
-        <div style={{ marginBottom: 'var(--s5)' }}>
+        <div className="mz-gap-b">
           <Notice icon={<Check size={18} />}>{saveSuccessMsg}</Notice>
         </div>
       )}
 
       {draftRestored && (
-        <div style={{ marginBottom: 'var(--s5)' }}>
+        <div className="mz-gap-b">
           <Notice tone="lav" icon={<Sparkles size={18} />}>
-            <strong>Черновик восстановлен.</strong> Ваши незавершённые ответы были восстановлены из локального хранилища (Poka-Yoke).
+            <strong>Черновик восстановлен.</strong> Незаконченные ответы сохранились на этом устройстве — можно продолжить.
           </Notice>
         </div>
       )}
 
       {saveErrorMessage && (
-        <div style={{ marginBottom: 'var(--s5)' }}>
+        <div className="mz-gap-b">
           <InlineAlert tone="error" onRetry={() => { handleSubmit(); }} onDismiss={() => setSaveErrorMessage(null)}>
             {saveErrorMessage}
           </InlineAlert>
@@ -235,7 +247,7 @@ export const WeeklyRetroView: React.FC<WeeklyRetroViewProps> = ({
       )}
 
       {hasSilentRetroWarning && (
-        <div style={{ marginBottom: 'var(--s5)' }}>
+        <div className="mz-gap-b">
           <Notice tone="warn" icon={<AlertTriangle size={18} />}>
             <strong>Silent Retro.</strong> Ответы короче {MIN_CHARS} символов («норм», «ок») включают флаг ⚪ в мониторинге
             куратора. Сформулируй мысль развёрнуто.
@@ -243,7 +255,7 @@ export const WeeklyRetroView: React.FC<WeeklyRetroViewProps> = ({
         </div>
       )}
 
-      <form onSubmit={handleSubmit} className="mz-stack" style={{ gap: 'var(--s5)' }}>
+      <form onSubmit={handleSubmit} className="mz-stack mz-stack--loose" noValidate>
         <Question
           n="01"
           title="Что получилось за эту неделю?"
@@ -277,8 +289,9 @@ export const WeeklyRetroView: React.FC<WeeklyRetroViewProps> = ({
             <span className="mz-chip mz-chip--lav">Приватность</span>
             Доступ родителей — решаешь ты
           </div>
-          <p style={{ marginTop: 0, marginBottom: 'var(--s4)', fontSize: 14 }}>
-            Ты определяешь объём данных, открытый семье. Куратор видит неделю в рамках договора школы.
+          <p className="mz-panel__lead">
+            Ты определяешь объём данных, открытый семье. Куратор видит неделю в рамках договора школы. Выбор применяется при
+            сохранении ретроспективы.
           </p>
           <div className="mz-choice" role="group" aria-label="Уровень доступа родителей">
             {accessOptions.map((o) => (
@@ -291,27 +304,27 @@ export const WeeklyRetroView: React.FC<WeeklyRetroViewProps> = ({
                 onClick={() => setParentAccessLevel(o.key)}
               >
                 <b>
-                  {o.icon} {o.key}
-                  {parentAccessLevel === o.key && <Check size={14} style={{ marginLeft: 'auto' }} />}
+                  {o.icon} {ACCESS_LEVEL_LABEL[o.key].title}
+                  {parentAccessLevel === o.key && <Check size={14} className="mz-push-right" />}
                 </b>
-                <p>{o.text}</p>
+                <p>{ACCESS_LEVEL_LABEL[o.key].hint}</p>
               </button>
             ))}
           </div>
         </section>
 
-        <button type="submit" disabled={isSubmitting} className="mz-btn mz-btn--primary mz-btn--lg mz-btn--block">
+        <button type="submit" disabled={isSubmitting || hasEmpty} className="mz-btn mz-btn--primary mz-btn--lg mz-btn--block">
           <Send size={18} />
           {isSubmitting ? 'Сохраняю…' : isSubmitted ? 'Обновить ретроспективу недели' : 'Зафиксировать и закрыть неделю'}
         </button>
       </form>
 
       {(mentorReview || parentReview) && (
-        <section style={{ marginTop: 'var(--s7)' }}>
+        <section className="mz-gap-t-lg">
           <div className="mz-h2">
             <div>
               <h2>
-                <Award size={22} style={{ display: 'inline', marginRight: 8, color: 'var(--magenta)' }} />
+                <Award size={22} className="mz-h2__icon" />
                 Обратная связь
               </h2>
             </div>
@@ -319,28 +332,28 @@ export const WeeklyRetroView: React.FC<WeeklyRetroViewProps> = ({
           <div className="mz-stack">
             {mentorReview && (
               <div className="mz-card mz-card--white">
-                <div className="mz-row mz-row--between" style={{ marginBottom: 'var(--s2)' }}>
+                <div className="mz-row mz-row--between mz-gap-b-xs">
                   <span className="mz-chip mz-chip--magenta">
                     <UserCheck size={12} /> Куратор · {mentorReview.mentor.fullName}
                   </span>
-                  <span className="mz-cell-sub" style={{ marginTop: 0 }}>
-                    {new Date(mentorReview.signedAt).toLocaleDateString('ru-RU')}
+                  <span className="mz-cell-sub mz-cell-sub--flush">
+                    {formatSchoolDateTime(mentorReview.signedAt, { day: 'numeric', month: 'long' })}
                   </span>
                 </div>
-                <p style={{ margin: 0, fontSize: 16, color: 'var(--dark)' }}>«{mentorReview.feedback}»</p>
+                <p className="mz-quote">«{mentorReview.feedback}»</p>
               </div>
             )}
             {parentReview && (
               <div className="mz-card mz-card--lav mz-card--white">
-                <div className="mz-row mz-row--between" style={{ marginBottom: 'var(--s2)' }}>
+                <div className="mz-row mz-row--between mz-gap-b-xs">
                   <span className="mz-chip mz-chip--lav">
                     <Shield size={12} /> Комментарий родителя
                   </span>
-                  <span className="mz-cell-sub" style={{ marginTop: 0 }}>
-                    {new Date(parentReview.signedAt).toLocaleDateString('ru-RU')}
+                  <span className="mz-cell-sub mz-cell-sub--flush">
+                    {formatSchoolDateTime(parentReview.signedAt, { day: 'numeric', month: 'long' })}
                   </span>
                 </div>
-                <p style={{ margin: 0, fontSize: 16, color: 'var(--dark)' }}>«{parentReview.comment}»</p>
+                <p className="mz-quote">«{parentReview.comment}»</p>
               </div>
             )}
           </div>

@@ -1,8 +1,8 @@
 'use client';
 
-import React, { Component, ErrorInfo } from 'react';
+import React, { Component, ErrorInfo, useEffect, useId, useRef } from 'react';
 import Image from 'next/image';
-import { AlertCircle, CheckCircle2, AlertTriangle, Info, RotateCw } from 'lucide-react';
+import { AlertCircle, CheckCircle2, AlertTriangle, Info, RotateCw, X } from 'lucide-react';
 
 export type Mascot = 'fiz' | 'adm' | 'art' | 'intro';
 
@@ -37,7 +37,7 @@ export const ViewHero: React.FC<ViewHeroProps> = ({ tag, title, text, mascot = '
         {children}
       </div>
       <div className="mz-hero__mascot" aria-hidden="true">
-        <Image src={`/brand/${mascot}.png`} alt="" width={230} height={230} priority style={{ height: '100%', width: 'auto' }} />
+        <Image src={`/brand/${mascot}.png`} alt="" width={207} height={230} priority className="mz-hero__mascot-img" />
       </div>
     </div>
     {stats && stats.length > 0 && (
@@ -110,8 +110,13 @@ export const InlineAlert: React.FC<InlineAlertProps> = ({
       <Info size={18} />
     );
 
+  const isProblem = tone === 'error' || tone === 'warn';
   return (
-    <div className={`mz-alert mz-alert--${tone} mz-fade-in`} role="alert" aria-live="assertive">
+    <div
+      className={`mz-alert mz-alert--${tone} mz-fade-in`}
+      role={isProblem ? 'alert' : 'status'}
+      aria-live={isProblem ? 'assertive' : 'polite'}
+    >
       <div className="mz-alert__icon" aria-hidden="true">{icon}</div>
       <div className="mz-alert__body">
         {title && <strong className="mz-alert__title">{title}</strong>}
@@ -121,14 +126,14 @@ export const InlineAlert: React.FC<InlineAlertProps> = ({
             <button type="button" className="mz-btn mz-btn--sm mz-btn--light" onClick={onRetry}>
               <RotateCw size={13} /> Повторить попытку
             </button>
-            {onDismiss && (
-              <button type="button" className="mz-link" onClick={onDismiss} style={{ fontSize: 13, marginLeft: 8 }}>
-                Закрыть
-              </button>
-            )}
           </div>
         )}
       </div>
+      {onDismiss && (
+        <button type="button" className="mz-alert__close" onClick={onDismiss} aria-label="Скрыть сообщение">
+          <X size={16} />
+        </button>
+      )}
     </div>
   );
 };
@@ -157,7 +162,7 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
   <div className="mz-empty-box mz-fade-in" role="region" aria-label={title}>
     {mascot ? (
       <div className="mz-empty-box__mascot" aria-hidden="true">
-        <Image src={`/brand/${mascot}.png`} alt="" width={120} height={120} style={{ width: 'auto', height: 100 }} />
+        <Image src={`/brand/${mascot}.png`} alt="" width={90} height={100} className="mz-empty-box__img" />
       </div>
     ) : icon ? (
       <div className="mz-empty-box__icon" aria-hidden="true">{icon}</div>
@@ -246,7 +251,7 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
             {this.state.error && (
               <pre className="mz-error-boundary__trace">{this.state.error.message}</pre>
             )}
-            <div className="mz-row" style={{ marginTop: 'var(--s5)' }}>
+            <div className="mz-row mz-gap-t-sm">
               <button type="button" className="mz-btn mz-btn--primary" onClick={this.handleReset}>
                 <RotateCw size={15} /> Перезагрузить страницу
               </button>
@@ -258,3 +263,113 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
     return this.props.children;
   }
 }
+
+/* ==========================================================================
+   Dialog — единый доступный модальный диалог (focus trap, Esc, блок прокрутки)
+   ========================================================================== */
+
+interface DialogProps {
+  title: string;
+  icon?: React.ReactNode;
+  onClose: () => void;
+  children: React.ReactNode;
+  /** Запретить закрытие (во время сохранения). */
+  busy?: boolean;
+  size?: 'sm' | 'md';
+}
+
+const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+export const Dialog: React.FC<DialogProps> = ({ title, icon, onClose, children, busy = false, size = 'sm' }) => {
+  const titleId = useId();
+  const panelRef = useRef<HTMLDivElement>(null);
+  const closeRef = useRef(onClose);
+  const busyRef = useRef(busy);
+
+  useEffect(() => {
+    closeRef.current = onClose;
+    busyRef.current = busy;
+  });
+
+  useEffect(() => {
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+    const panel = panelRef.current;
+    // Фокус внутрь диалога, если автофокус не задан полю
+    if (panel && !panel.contains(document.activeElement)) {
+      (panel.querySelector<HTMLElement>('[autofocus]') ?? panel.querySelector<HTMLElement>(FOCUSABLE))?.focus();
+    }
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !busyRef.current) {
+        e.stopPropagation();
+        closeRef.current();
+      }
+      if (e.key === 'Tab' && panel) {
+        const nodes = Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE));
+        if (!nodes.length) return;
+        const first = nodes[0];
+        const last = nodes[nodes.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.body.style.overflow = prevOverflow;
+      previouslyFocused?.focus?.();
+    };
+  }, []);
+
+  return (
+    <div className="mz-dialog" role="presentation">
+      <div className="mz-dialog__backdrop" onClick={() => !busy && onClose()} aria-hidden="true" />
+      <div
+        ref={panelRef}
+        className={`mz-dialog__panel mz-dialog__panel--${size} mz-fade-in`}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+      >
+        <div className="mz-dialog__head">
+          <h2 id={titleId}>
+            {icon}
+            {title}
+          </h2>
+          <button type="button" className="mz-icon-btn" onClick={onClose} disabled={busy} aria-label="Закрыть">
+            <X size={18} />
+          </button>
+        </div>
+        <div className="mz-dialog__body">{children}</div>
+      </div>
+    </div>
+  );
+};
+
+/** Скелетон рабочей области ученика: повторяет сетку спринта, дней и hero — без «прыжка» макета. */
+export const PageSkeleton: React.FC<{ label?: string }> = ({ label = 'Загрузка…' }) => (
+  <div className="mz-page-skeleton" role="status" aria-live="polite" aria-label={label}>
+    <div className="mz-page-skeleton__row">
+      {Array.from({ length: 10 }, (_, i) => (
+        <Skeleton key={i} height={58} />
+      ))}
+    </div>
+    <div className="mz-page-skeleton__row mz-page-skeleton__row--days">
+      {Array.from({ length: 5 }, (_, i) => (
+        <Skeleton key={i} height={64} />
+      ))}
+    </div>
+    <Skeleton height={72} />
+    <Skeleton height={260} />
+    <Skeleton height={84} />
+    <Skeleton height={84} />
+    <span className="mz-visually-hidden">{label}</span>
+  </div>
+);
