@@ -54,6 +54,11 @@ COPY --from=builder --chown=nextjs:nodejs /app/node_modules/prisma ./node_module
 # Entrypoint script
 COPY --chown=nextjs:nodejs docker-entrypoint.sh ./docker-entrypoint.sh
 
+# Каталог медиа (фото конспектов, голос): должен принадлежать nextjs, иначе загрузки падают.
+# Монтируйте сюда постоянный том — тогда артефакты переживают пересборку контейнера.
+RUN mkdir -p /app/public/uploads && chown -R nextjs:nodejs /app/public/uploads
+VOLUME ["/app/public/uploads"]
+
 USER nextjs
 
 EXPOSE 3000
