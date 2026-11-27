@@ -37,9 +37,15 @@ ENV HOSTNAME="0.0.0.0"
 # Свежие системные пакеты Alpine (а не те, что были в базовом образе на момент его сборки).
 # npm, npx, corepack и yarn в рабочем контейнере не нужны: он запускает node и Prisma напрямую.
 # Убираем их, чтобы в образе не оставалось их уязвимых зависимостей (pacote, sigstore, brace-expansion…).
-RUN apk upgrade --no-cache \
-	&& apk add --no-cache openssl curl \
-	&& rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
+# Сеть сервера сборки иногда обрывает загрузку индекса Alpine ("v2 database format error"),
+# поэтому apk повторяется с паузой, а не роняет всю выкатку с первой попытки.
+RUN set -eu; \
+	for attempt in 1 2 3 4 5; do \
+		if apk upgrade --no-cache && apk add --no-cache openssl curl; then break; fi; \
+		if [ "$attempt" -eq 5 ]; then echo "apk failed after 5 attempts"; exit 1; fi; \
+		echo "apk failed on attempt $attempt, retrying"; sleep $((attempt * 10)); \
+	done; \
+	rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
 		/usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack \
 		/usr/local/bin/yarn /usr/local/bin/yarnpkg /opt/yarn-*
 
