@@ -10,3 +10,6 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 README.md
+
+# Исходные таблицы (расписание и т.п.) нужны только для разработки, в образ не попадают
+*.xlsx

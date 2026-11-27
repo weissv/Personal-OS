@@ -34,7 +34,14 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
 
-RUN apk add --no-cache openssl curl
+# Свежие системные пакеты Alpine (а не те, что были в базовом образе на момент его сборки).
+# npm, npx, corepack и yarn в рабочем контейнере не нужны: он запускает node и Prisma напрямую.
+# Убираем их, чтобы в образе не оставалось их уязвимых зависимостей (pacote, sigstore, brace-expansion…).
+RUN apk upgrade --no-cache \
+	&& apk add --no-cache openssl curl \
+	&& rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
+		/usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack \
+		/usr/local/bin/yarn /usr/local/bin/yarnpkg /opt/yarn-*
 
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
